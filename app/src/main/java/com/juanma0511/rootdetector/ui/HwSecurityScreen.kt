@@ -298,7 +298,7 @@ fun HwCheckCard(item: HwCheckItem) {
                             CheckStatus.PASS    -> "PASS"
                             CheckStatus.WARN    -> "WARN"
                             CheckStatus.FAIL    -> "FAIL"
-                            CheckStatus.UNKNOWN -> "N/A"
+                            CheckStatus.UNKNOWN -> "INFO"
                         },
                         modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
                         style = MaterialTheme.typography.labelSmall,

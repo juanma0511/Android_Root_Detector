@@ -214,8 +214,8 @@ class HwSecurityDetector(private val context: Context) {
             description = "Checks if the device has a dedicated StrongBox security chip",
             status = if (hasStrongBox) CheckStatus.PASS else CheckStatus.UNKNOWN,
             value = if (hasStrongBox) "Present" else "Not available",
-            expected = "Present (optional — high-end devices only)",
-            detail = if (!hasStrongBox) "No dedicated StrongBox chip. TEE is used instead — this is normal on most devices." else null
+            expected = "Optional",
+            detail = if (!hasStrongBox) "No dedicated StrongBox chip. TEE is used instead and that is normal on many devices." else null
         )
     }
 
@@ -227,7 +227,19 @@ class HwSecurityDetector(private val context: Context) {
                 group = HwGroup.KEYSTORE,
                 description = "Attempts to generate a key in StrongBox",
                 status = CheckStatus.UNKNOWN,
-                value = "Android < 9 — N/A"
+                value = "Android < 9",
+                detail = "StrongBox-backed key generation is not available on this Android version"
+            )
+        }
+        if (!context.packageManager.hasSystemFeature("android.hardware.strongbox_keystore")) {
+            return HwCheckItem(
+                id = "strongbox_key",
+                name = "StrongBox Key Generation",
+                group = HwGroup.KEYSTORE,
+                description = "Attempts to generate a key in StrongBox",
+                status = CheckStatus.UNKNOWN,
+                value = "Not available",
+                detail = "This device does not advertise StrongBox-backed key generation"
             )
         }
         return try {
@@ -262,7 +274,7 @@ class HwSecurityDetector(private val context: Context) {
                 description = "Attempts to generate a key backed by StrongBox hardware",
                 status = CheckStatus.UNKNOWN,
                 value = "StrongBox unavailable",
-                detail = "No StrongBox chip — normal on most devices. TEE-backed keys are used."
+                detail = "The device did not expose StrongBox-backed key generation"
             )
         } catch (e: Exception) {
             HwCheckItem(
@@ -270,7 +282,7 @@ class HwSecurityDetector(private val context: Context) {
                 name = "StrongBox Key Generation",
                 group = HwGroup.KEYSTORE,
                 description = "Attempts to generate a key backed by StrongBox hardware",
-                status = CheckStatus.UNKNOWN,
+                status = CheckStatus.FAIL,
                 value = "Error",
                 detail = e.message
             )
