@@ -1,5 +1,20 @@
 # Kknd Root Detector
 
+<div align="center">
+  <table style="width: 100%; max-width: 512px; border: none;">
+    <tr>
+      <td align="center" valign="middle" background="art/kkndBg.png" style="aspect-ratio: 2/1; background-size: cover; background-position: center; border: none; padding: 2% 8%;">
+        <nobr>
+          <img src="art/kknd.svg" style="width: 65%; max-width: 330px; vertical-align: middle;">
+          <img src="art/kkndapp.svg" style="width: 30%; max-width: 150px; vertical-align: middle;">
+        </nobr>
+      </td>
+    </tr>
+  </table>
+</div>
+
+
+
 Kknd Root Detector is a lightweight Android application that checks whether a device may be rooted or running in a potentially insecure environment.
 
 The project demonstrates common techniques used by security‑sensitive Android apps to detect root access and system modifications.
@@ -88,7 +103,7 @@ The generated APK will be located at:
 
 ## Project Preview
 
-<img src="https://github.com/juanma0511/Kknd_Root_Detector/blob/main/art/rootdetection.jpg" width="350">
+<img src="art/rootdetection.jpg" width="350">
 
 ------------------------------------------------------------------------
 
