@@ -19,13 +19,7 @@ class OverlayFsDetector {
                 val mountPoint = parts[1]
                 val fileSystem = parts[2]
                 val options = parts[3]
-                if (
-                    mountPoint.startsWith("/system") ||
-                    mountPoint.startsWith("/system_ext") ||
-                    mountPoint.startsWith("/vendor") ||
-                    mountPoint.startsWith("/product") ||
-                    mountPoint.startsWith("/odm")
-                ) {
+                if (HardcodedSignals.protectedSystemPaths.any { mountPoint.startsWith(it) }) {
                     val signature = "$device $fileSystem $options ${line.lowercase()}"
                     if (DetectorTrust.hasRootMountSignal(signature, mountPoint, trustedLocked)) {
                         evidence += "$mountPoint [$device $fileSystem $options]"

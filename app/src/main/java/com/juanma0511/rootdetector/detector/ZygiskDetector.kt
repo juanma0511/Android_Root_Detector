@@ -30,7 +30,7 @@ class ZygiskDetector {
         } catch (_: Exception) {}
 
         try {
-            val sensitiveEnvKeys = listOf("LD_PRELOAD", "LD_LIBRARY_PATH", "JAVA_TOOL_OPTIONS")
+            val sensitiveEnvKeys = HardcodedSignals.envKeys + "JAVA_TOOL_OPTIONS"
             System.getenv().forEach { (key, value) ->
                 val entry = "$key=$value"
                 if (sensitiveEnvKeys.any { key.equals(it, ignoreCase = true) } &&

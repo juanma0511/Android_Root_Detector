@@ -11,102 +11,36 @@ import java.io.File
 
 class RootDetector(private val context: Context) {
 
-    private val suPaths = listOf(
-        "/sbin/su", "/system/bin/su", "/system/xbin/su",
-        "/system/bin/su64", "/system/xbin/su64", "/system_ext/bin/su",
-        "/system_ext/xbin/su", "/product/bin/su", "/vendor/bin/su",
-        "/vendor/xbin/su", "/system/bin/.ext/.su", "/system/xbin/daemonsu",
-        "/system/usr/we-need-root/su-backup", "/su/bin/su", "/debug_ramdisk/su",
-        "/data/local/su", "/data/local/bin/su", "/data/local/xbin/su",
-        "/system/sd/xbin/su", "/system/bin/failsafe/su", "/cache/recovery/su",
-        "/data/adb/su", "/data/local/tmp/su", "/system/app/Superuser.apk",
-        "/system/etc/init.d/99SuperSUDaemon", "/system/xbin/sugote"
-    )
-
-    private val rootPackages = listOf(
-        "com.noshufou.android.su", "com.noshufou.android.su.elite",
-        "eu.chainfire.supersu", "eu.chainfire.supersu.pro",
-        "com.koushikdutta.superuser", "com.thirdparty.superuser",
-        "com.yellowes.su", "com.kingouser.com",
-        "com.kingroot.kinguser", "com.kingo.root",
-        "com.smedialink.oneclickroot", "com.alephzain.framaroot",
-        "com.jrummy.root.browserfree", "com.jrummy.roots.browserfree",
-        "com.topjohnwu.magisk", "io.github.topjohnwu.magisk",
-        "io.github.huskydg.magisk", "io.github.vvb2060.magisk",
-        "io.github.vvb2060.magisk.delta", "io.github.a13e300.magisk",
-        "io.github.1q23lyc45.magisk", "com.topjohnwu.magisk.alpha",
-        "me.weishu.kernelsu", "com.rifsxd.ksunext",
-        "com.sukisu.ultra", "io.github.a13e300.ksuwebui",
-        "me.bmax.apatch", "me.yuki.folk",
-        "org.lsposed.manager", "org.lsposed.lspatch",
-        "io.github.lsposed.manager", "com.lsposed.manager",
-        "de.robv.android.xposed.installer", "me.weishu.exp",
-        "com.solohsu.android.edxp.manager", "org.meowcat.edxposed.manager",
-        "com.fox2code.mmm", "com.fox2code.mmm.debug", "com.fox2code.mmm.fdroid",
-        "com.fox2code.mmm.minimal", "com.fox2code.mmm.oss",
-        "com.dergoogler.mmrl", "com.devadvance.rootcloak",
-        "com.devadvance.rootcloakplus", "com.chrisbjohnson.hiddenroot",
-        "io.github.huskydg.magisk.hide", "io.github.huskydg.magisk.modules",
-        "org.meowcat.mihomo", "com.tsng.hidemyapplist", "org.frknkrc44.hma_oss",
-        "stericson.busybox", "stericson.busybox.donate",
-        "com.dimonvideo.luckypatcher", "com.chelpus.lackypatch",
-        "com.ramdroid.appquarantine",
-        "com.android.vending.billing.InAppBillingService.COIN",
-        "com.android.vending.billing.InAppBillingService.LUCK"
-    )
-
-    private val patchedApps = listOf(
-        "app.revanced.android.youtube", "app.revanced.android.youtube.music",
-        "com.mgoogle.android.gms", "app.revanced.manager.flutter", "app.revanced.manager",
-        "app.rvx.android.youtube", "app.rvx.android.youtube.music",
-        "com.coderstory.toolkit", "com.catsoft.hmafree",
-        "com.catsoft.hma", "me.hsc.hma", "app.hma.free",
-        "app.hma", "com.tsng.hidemyapplist", "org.frknkrc44.hma_oss",
-        "org.lsposed.manager", "org.lsposed.lspatch", "io.github.lsposed.manager",
-        "com.lsposed.manager", "de.robv.android.xposed.installer",
-        "com.solohsu.android.edxp.manager", "org.meowcat.edxposed.manager",
-        "me.weishu.exp",
-        "com.speedsoftware.rootexplorer", "com.estrongs.android.pop",
-        "com.fox2code.mmm", "com.dergoogler.mmrl",
-        "rikka.safetynetchecker", "io.github.vvb2060.keyattestation"
-    )
-
-    private val warningApps = linkedMapOf(
-        "moe.shizuku.privileged.api" to "Shizuku",
-        "com.termux" to "Termux",
-        "com.termux.api" to "Termux:API",
-        "bin.mt.plus" to "MT Manager",
-        "com.draco.ladb" to "LADB",
-        "io.github.muntashirakon.AppManager" to "App Manager",
-        "io.github.muntashirakon.AppManager.debug" to "App Manager Debug"
-    )
-
-    private val magiskPaths = listOf(
-        "/sbin/.magisk", "/sbin/.core/mirror", "/sbin/.core/img",
-        "/data/adb/magisk", "/data/adb/magisk.img", "/data/adb/magisk.db",
-        "/data/adb/modules", "/data/adb/modules_update", "/data/adb/service.d",
-        "/data/adb/post-fs-data.d", "/data/adb/overlay", "/data/adb/ksu",
-        "/data/adb/ksud", "/data/adb/ksu/bin", "/data/adb/ap",
-        "/data/adb/apd", "/data/adb/ap/bin", "/debug_ramdisk/.magisk",
-        "/cache/.disable_magisk", "/system/addon.d/99-magisk.sh",
-        "/dev/.magisk.unblock", "/dev/magisk_merge", "/dev/ksud", "/dev/ksu", "/dev/apatch",
-        "/data/adb/tricky_store", "/data/adb/trickystore", "/data/adb/shamiko",
-        "/data/adb/lsposed", "/data/adb/riru", "/data/adb/modules/zygisk_lsposed",
-        "/data/adb/modules/playintegrityfix", "/data/adb/modules/tricky_store"
-    )
-
-    private val dangerousBinaries = listOf(
-        "su", "busybox", "magisk", "magisk64", "magiskpolicy", "resetprop", "supolicy",
-        "ksud", "ksuinit", "apd", "zygisk", "zygote64_zygisk", "zygote_zygisk",
-        "zygiskd", "magiskhide", "tricky_store", "susfs"
-    )
-    private val binaryPaths = listOf(
-        "/sbin/", "/system/bin/", "/system/xbin/", "/system_ext/bin/",
-        "/system_ext/xbin/", "/product/bin/", "/vendor/bin/", "/vendor/xbin/",
-        "/data/local/xbin/", "/data/local/bin/", "/data/local/tmp/", "/su/bin/",
-        "/debug_ramdisk/", "/data/adb/ksu/bin/", "/data/adb/ap/bin/",
-        "/data/adb/magisk/", "/data/adb/tricky_store/", "/data/adb/modules/"
-    )
+    private val suPaths = HardcodedSignals.suPaths
+    private val rootPackages = HardcodedSignals.rootPackages
+    private val patchedApps = HardcodedSignals.patchedApps
+    private val warningApps = LinkedHashMap(HardcodedSignals.warningApps)
+    private val magiskPaths = HardcodedSignals.magiskPaths
+    private val dangerousBinaries = HardcodedSignals.dangerousBinaries
+    private val binaryPaths = HardcodedSignals.binaryPaths
+    private val protectedSystemPaths = HardcodedSignals.protectedSystemPaths
+    private val fridaProcesses = HardcodedSignals.fridaProcesses
+    private val fridaPorts = HardcodedSignals.fridaPorts
+    private val emulatorProducts = HardcodedSignals.emuProducts.toSet()
+    private val kernelSuPackages = HardcodedSignals.kernelSuPackages
+    private val kernelSuPaths = HardcodedSignals.kernelSuPaths
+    private val moduleDirs = HardcodedSignals.moduleDirs
+    private val moduleScanFiles = HardcodedSignals.moduleScanFiles
+    private val managerActions = HardcodedSignals.managerActions
+    private val envKeys = HardcodedSignals.envKeys
+    private val devSocketKeywords = HardcodedSignals.devSocketKeywords
+    private val kernelCmdlineFlags = HardcodedSignals.kernelCmdlineFlags
+    private val hiddenModuleKeywords = HardcodedSignals.hiddenModuleKeywords
+    private val hideBypassKeywords = HardcodedSignals.hideBypassKeywords
+    private val customRomProps = HardcodedSignals.customRomProps
+    private val customRomKeywords = HardcodedSignals.customRomKeywords
+    private val customRomFiles = HardcodedSignals.customRomFiles
+    private val lineageServices = HardcodedSignals.lineageServices
+    private val lineagePermissions = HardcodedSignals.lineagePermissions
+    private val lineageInitFiles = HardcodedSignals.lineageInitFiles
+    private val lineageSepolicyFiles = HardcodedSignals.lineageSepolicyFiles
+    private val knownDangerousModules = HardcodedSignals.knownDangerousModules
+    private val frameworkSweepKeywords = HardcodedSignals.allFrameworkSweepKeywords
 
     fun runAllChecks(progressCallback: (Int) -> Unit = {}): List<DetectionItem> {
         val checks: List<() -> List<DetectionItem>> = listOf(
@@ -132,6 +66,10 @@ class RootDetector(private val context: Context) {
             ::checkSuInPath,
             ::checkSELinux,
             ::checkPackageManagerAnomalies,
+            ::checkLineageServices,
+            ::checkLineagePermissions,
+            ::checkLineageInitFiles,
+            ::checkLineageSepolicy,
             ::checkCustomRom,
             ::checkKernelCmdline,
             ::checkEnvHooks,
@@ -148,7 +86,8 @@ class RootDetector(private val context: Context) {
             ::checkMemfdArtifacts,
             ::checkPropertyConsistency,
             ::checkHideBypassModules,
-            ::checkHiddenMagiskModules
+            ::checkHiddenMagiskModules,
+            ::checkHardcodedFrameworkSweep
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -290,7 +229,7 @@ class RootDetector(private val context: Context) {
     private fun checkWritablePaths(): List<DetectionItem> {
         val writable = linkedSetOf<String>()
         val trustedLocked = bootLooksLockedAndNormal()
-        val protectedPaths = listOf("/system", "/system_root", "/system_ext", "/vendor", "/product", "/odm")
+        val protectedPaths = protectedSystemPaths
         protectedPaths.forEach { path ->
             if (!trustedLocked && runCatching { File(path).canWrite() }.getOrDefault(false)) {
                 writable += "$path (filesystem write access)"
@@ -371,12 +310,12 @@ class RootDetector(private val context: Context) {
 
     private fun checkFrida(): List<DetectionItem> {
         val evidence = linkedSetOf<String>()
-        listOf("frida-server", "frida-helper", "frida-agent", "gum-js-loop").forEach { name ->
+        fridaProcesses.forEach { name ->
             if (isProcessRunning(name)) {
                 evidence += "process=$name"
             }
         }
-        listOf(27042, 27043, 27049, 23946).forEach { port ->
+        fridaPorts.forEach { port ->
             val open = try {
                 val socket = java.net.Socket()
                 socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 150)
@@ -412,8 +351,7 @@ class RootDetector(private val context: Context) {
         if (fp.startsWith("generic") || fp.contains(":generic/")) indicators += "FINGERPRINT starts with generic"
         if (Build.HARDWARE == "goldfish" || Build.HARDWARE == "ranchu") indicators += "HARDWARE=${Build.HARDWARE}"
         if (Build.MANUFACTURER.equals("Genymotion", ignoreCase = true)) indicators += "MANUFACTURER=Genymotion"
-        val emuProducts = setOf("sdk_gphone_x86", "sdk_gphone64_x86_64", "sdk_x86", "google_sdk", "vbox86p", "generic_x86")
-        if (Build.PRODUCT in emuProducts) indicators += "PRODUCT=${Build.PRODUCT}"
+        if (Build.PRODUCT in emulatorProducts) indicators += "PRODUCT=${Build.PRODUCT}"
         return listOf(det(
             "emulator", "Emulator / Virtual Device", DetectionCategory.EMULATOR, Severity.MEDIUM,
             "Exact emulator hardware/product/fingerprint signatures",
@@ -424,7 +362,7 @@ class RootDetector(private val context: Context) {
     private fun checkMountPoints(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
         val trustedLocked = bootLooksLockedAndNormal()
-        val targets = listOf("/system", "/system_root", "/system_ext", "/vendor", "/product", "/odm")
+        val targets = protectedSystemPaths
         try {
             File("/proc/mounts").forEachLine { line ->
                 val parts = line.split(" ")
@@ -464,7 +402,7 @@ class RootDetector(private val context: Context) {
 
     private fun checkNativeLibMaps(): List<DetectionItem> {
         val found = linkedSetOf<String>()
-        val systemPaths = listOf("/system/", "/apex/", "/vendor/", "/product/", "/odm/")
+        val systemPaths = protectedSystemPaths.map { "$it/" } + "/apex/"
         val keywords = frameworkKeywords()
         try {
             File("/proc/self/maps").forEachLine { line ->
@@ -518,12 +456,12 @@ class RootDetector(private val context: Context) {
                 evidence += "prop $prop=$value"
             }
         }
-        listOf("me.weishu.kernelsu", "com.rifsxd.ksunext", "com.sukisu.ultra", "io.github.a13e300.ksuwebui").forEach { pkg ->
+        kernelSuPackages.forEach { pkg ->
             if (isPackageInstalled(context.packageManager, pkg)) {
                 evidence += "package $pkg"
             }
         }
-        listOf("/dev/ksud", "/dev/ksu", "/data/adb/ksu", "/data/adb/ksud", "/data/adb/ksu/bin", "/sys/module/kernelsu", "/sys/kernel/ksu", "/proc/kernelsu").forEach { path ->
+        kernelSuPaths.forEach { path ->
             if (File(path).exists()) {
                 evidence += path
             }
@@ -554,38 +492,10 @@ class RootDetector(private val context: Context) {
     }
 
     private fun checkZygiskModules(): List<DetectionItem> {
-        val moduleDirs = listOf("/data/adb/modules", "/data/adb/modules_update", "/data/adb/riru/modules")
-        val knownDangerous = mapOf(
-            "playintegrityfix" to "Play Integrity Fix",
-            "pif" to "Play Integrity Fix",
-            "tricky_store" to "TrickyStore",
-            "tricky-store" to "TrickyStore",
-            "trickystore" to "TrickyStore",
-            "hidemyapplist" to "Hide My Applist",
-            "hma" to "Hide My Applist",
-            "lsposed" to "LSPosed",
-            "zygisk_lsposed" to "LSPosed (Zygisk)",
-            "riru_lsposed" to "LSPosed (Riru)",
-            "shamiko" to "Shamiko",
-            "zygisk-assistant" to "Zygisk Assistant",
-            "zygisksu" to "ZygiskSU",
-            "susfs" to "SUSFS",
-            "ksu_susfs" to "KernelSU SUSFS",
-            "safetynet-fix" to "SafetyNet Fix",
-            "safetynetfix" to "SafetyNet Fix",
-            "magiskhidepropsconf" to "MagiskHide Props Config",
-            "magical_overlayfs" to "Magical OverlayFS",
-            "magisk_overlayfs" to "Magisk OverlayFS",
-            "zygisknext" to "Zygisk Next",
-            "zygisk-detach" to "Zygisk Detach",
-            "resetprop" to "Resetprop helper",
-            "shamiko-whitelist" to "Shamiko helper",
-            "riru" to "Riru",
-            "denylist" to "DenyList helper"
-        )
+        val knownDangerous = knownDangerousModules
         val detectedModules = linkedSetOf<String>()
         val genericModules = linkedSetOf<String>()
-        val scanFiles = listOf("module.prop", "service.sh", "post-fs-data.sh", "customize.sh", "sepolicy.rule")
+        val scanFiles = moduleScanFiles
         moduleDirs.forEach { dirPath ->
             File(dirPath).takeIf { it.isDirectory }?.listFiles()?.forEach { module ->
                 val moduleName = module.name.lowercase()
@@ -693,12 +603,7 @@ class RootDetector(private val context: Context) {
                 }
             }
         } catch (_: Exception) {}
-        listOf(
-            "com.topjohnwu.magisk.MAIN",
-            "org.lsposed.manager.LAUNCH_MANAGER",
-            "com.rifsxd.ksunext.MAIN",
-            "me.weishu.kernelsu.action.MAIN"
-        ).forEach { action ->
+        managerActions.forEach { action ->
             try {
                 val resolved = pm.queryIntentActivities(Intent(action), PackageManager.MATCH_DEFAULT_ONLY)
                 if (resolved.isNotEmpty()) {
@@ -808,20 +713,7 @@ class RootDetector(private val context: Context) {
         val suspicious = linkedSetOf<String>()
         try {
             val cmdline = File("/proc/cmdline").readText()
-            val flags = listOf(
-                "androidboot.selinux=permissive",
-                "androidboot.verifiedbootstate=orange",
-                "androidboot.verifiedbootstate=yellow",
-                "androidboot.flash.locked=0",
-                "androidboot.vbmeta.device_state=unlocked",
-                "androidboot.veritymode=disabled",
-                "androidboot.veritymode=logging",
-                "skip_initramfs",
-                "init=/system/bin/sh",
-                "selinux=0",
-                "enforcing=0"
-            )
-            flags.forEach { flag ->
+            kernelCmdlineFlags.forEach { flag ->
                 if (cmdline.contains(flag)) {
                     suspicious += flag
                 }
@@ -841,12 +733,7 @@ class RootDetector(private val context: Context) {
         private fun checkEnvHooks(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
         try {
-            val env = mapOf(
-                "LD_PRELOAD" to System.getenv("LD_PRELOAD"),
-                "LD_LIBRARY_PATH" to System.getenv("LD_LIBRARY_PATH"),
-                "DYLD_INSERT_LIBRARIES" to System.getenv("DYLD_INSERT_LIBRARIES"),
-                "CLASSPATH" to System.getenv("CLASSPATH")
-            )
+            val env = envKeys.associateWith { System.getenv(it) }
             env.forEach { (key, value) ->
                 val current = value.orEmpty()
                 val lower = current.lowercase()
@@ -868,7 +755,7 @@ class RootDetector(private val context: Context) {
 
         private fun checkDevSockets(): List<DetectionItem> {
         val found = linkedSetOf<String>()
-        val keywords = listOf("magisk", "zygisk", "ksu", "kernelsu", "lsposed", "apatch", "riru")
+        val keywords = devSocketKeywords
         try {
             File("/dev/socket").listFiles()?.forEach { file ->
                 val name = file.name.lowercase()
@@ -1021,7 +908,7 @@ class RootDetector(private val context: Context) {
                 val device = parts[0]
                 val mountPoint = parts[1]
                 val fileSystem = parts[2]
-                val protectedMount = mountPoint.startsWith("/system") || mountPoint.startsWith("/system_ext") || mountPoint.startsWith("/vendor") || mountPoint.startsWith("/product") || mountPoint.startsWith("/odm")
+                val protectedMount = protectedSystemPaths.any { mountPoint.startsWith(it) }
                 if (protectedMount && strongRootMountSignal("$device [$fileSystem]", mountPoint, trustedLocked)) {
                     mounts += "$device -> $mountPoint [$fileSystem]"
                 }
@@ -1041,21 +928,28 @@ class RootDetector(private val context: Context) {
         )
     }
 
-        private fun checkBinderServices(): List<DetectionItem> {
+    private fun checkBinderServices(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
+        val serviceKeywords = HardcodedSignals.strongRuntimeKeywords + listOf("magiskd", "zygiskd", "tricky_store")
         try {
             val process = Runtime.getRuntime().exec("service list")
             val output = process.inputStream.bufferedReader().readText()
             process.waitFor()
-            frameworkKeywords().filter { output.contains(it, true) }.forEach { suspicious += it }
+            output.lineSequence().forEach { line ->
+                val lower = line.lowercase()
+                val hits = serviceKeywords.filter { lower.contains(it) }
+                if (hits.isNotEmpty()) {
+                    suspicious += line.trim().take(160)
+                }
+            }
         } catch (_: Exception) {}
         return listOf(
             det(
                 "binder_services",
-                "Suspicious Binder Services",
+                "Runtime Service List",
                 DetectionCategory.MAGISK,
                 Severity.HIGH,
-                "Binder services registered by Magisk, LSPosed, Riru, KernelSU or APatch components",
+                "Looks for root and hook framework services exposed through Android service list",
                 suspicious.isNotEmpty(),
                 suspicious.joinToString("\n").ifEmpty { null }
             )
@@ -1087,10 +981,10 @@ class RootDetector(private val context: Context) {
 
         private fun checkHiddenMagiskModules(): List<DetectionItem> {
         val detected = linkedSetOf<String>()
-        val keywords = listOf("lsposed", "zygisk", "shamiko", "riru", "playintegrityfix", "trickystore", "susfs", "kernelsu", "apatch")
-        val scanFiles = listOf("module.prop", "service.sh", "post-fs-data.sh", "customize.sh", "sepolicy.rule")
+        val keywords = hiddenModuleKeywords
+        val scanFiles = moduleScanFiles
         try {
-            listOf("/data/adb/modules", "/data/adb/modules_update").forEach { dirPath ->
+            moduleDirs.forEach { dirPath ->
                 File(dirPath).listFiles()?.forEach { module ->
                     val moduleName = module.name.lowercase()
                     if (keywords.any { moduleName.contains(it) }) {
@@ -1254,15 +1148,8 @@ class RootDetector(private val context: Context) {
 
     private fun checkHideBypassModules(): List<DetectionItem> {
         val detected = linkedSetOf<String>()
-        val keywords = listOf(
-            "shamiko", "trickystore", "playintegrityfix", "integrityfix", "safetynetfix",
-            "safetynet-fix", "hidemyapplist", "hide my applist", "denylist", "deny-list",
-            "susfs", "nohello", "zygisk assistant", "zygiskassistant",
-            "tricky-store", "magical overlayfs", "magisk overlayfs", "resetprop",
-            "zygisknext", "zygisk detach", "play integrity fix", "kernelpatch"
-        )
-        val scanFiles = listOf("module.prop", "service.sh", "post-fs-data.sh", "customize.sh", "action.sh", "system.prop", "sepolicy.rule")
-        val moduleDirs = listOf("/data/adb/modules", "/data/adb/modules_update", "/metadata/adb/modules", "/mnt/.magisk/modules")
+        val keywords = hideBypassKeywords
+        val scanFiles = moduleScanFiles + listOf("action.sh", "system.prop")
 
         try {
             moduleDirs.forEach { dirPath ->
@@ -1303,52 +1190,207 @@ class RootDetector(private val context: Context) {
         )
     }
 
-    private fun checkCustomRom(): List<DetectionItem> {
-        val indicators = mutableListOf<String>()
+    private fun checkHardcodedFrameworkSweep(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val trustedLocked = bootLooksLockedAndNormal()
+        val keywords = frameworkSweepKeywords
+        val mountKeywords = setOf("magisk", "zygisk", "kernelsu", "ksu", "apatch", "shamiko", "trickystore", "playintegrityfix", "susfs")
+        val exactServiceMarkers = setOf("magiskd", "zygiskd", "lsposed", "riru", "tricky_store", "trickystore", "kernelsu", "ksud", "apatch")
+        val exactPropMarkers = setOf("magisk", "zygisk", "kernelsu", "ksu", "apatch", "shamiko", "trickystore", "playintegrityfix", "resetprop", "susfs")
+        val exactRuntimeMarkers = setOf("magisk", "magiskd", "zygisk", "zygiskd", "lsposed", "riru", "lspd", "kernelsu", "ksud", "apatch", "shamiko", "trickystore", "susfs", "resetprop")
+        val groupedSources = linkedSetOf<String>()
+        var criticalHits = 0
+        var mountHit = false
 
-        val romProps = mapOf(
-            "ro.lineage.version"          to "LineageOS",
-            "ro.lineage.build.version"    to "LineageOS",
-            "ro.lineage.device"           to "LineageOS",
-            "ro.cm.version"               to "CyanogenMod",
-            "ro.crdroid.version"          to "crDroid",
-            "ro.evolution.version"        to "EvolutionX",
-            "ro.evox.version"             to "EvolutionX",
-            "ro.arrow.version"            to "ArrowOS",
-            "ro.havoc.version"            to "HavocOS",
-            "ro.pe.version"               to "PixelExperience",
-            "ro.pixelexperience.version"  to "PixelExperience",
-            "org.pixelexperience.version" to "PixelExperience",
-            "ro.pixelos.version"          to "PixelOS",
-            "ro.yaap.version"             to "YAAP",
-            "ro.yaap.build.version"       to "YAAP",
-            "ro.pa.version"               to "ParanoidAndroid",
-            "ro.derp.version"             to "DerpFest",
-            "ro.elixir.version"           to "ProjectElixir",
-            "ro.projectelixir.version"    to "ProjectElixir",
-            "ro.potato.version"           to "POSP",
-            "ro.superior.version"         to "SuperiorOS",
-            "ro.spark.version"            to "SparkOS",
-            "ro.bliss.version"            to "BlissROMs",
-            "ro.phhgsi.android.version"   to "PHH-GSI",
-            "ro.rising.version"           to "RisingOS",
-            "ro.rising.build.version"     to "RisingOS",
-            "ro.matrixx.version"          to "Project Matrixx",
-            "ro.nameless.version"         to "Nameless AOSP",
-            "ro.aicp.version"             to "AICP",
-            "ro.ancient.version"          to "AncientOS",
-            "ro.afterlife.version"        to "AfterLifeOS",
-            "ro.cherish.version"          to "CherishOS",
-            "ro.syberia.version"          to "SyberiaOS",
-            "ro.xtended.version"          to "Xtended",
-            "ro.dot.version"              to "DotOS",
-            "ro.awaken.version"           to "AwakenOS",
-            "ro.pixys.version"            to "PixysOS"
+        fun sourceGroup(source: String): String = when {
+            source.startsWith("maps") -> "maps"
+            source.startsWith("mount") -> "mounts"
+            else -> source
+        }
+
+        fun containsToken(text: String, token: String): Boolean {
+            return Regex("""(^|[^a-z0-9_])${Regex.escape(token)}([^a-z0-9_]|$)""").containsMatchIn(text)
+        }
+
+        fun collectHits(source: String, lines: Sequence<String>, limit: Int) {
+            lines.forEach { raw ->
+                val line = raw.trim()
+                val lower = line.lowercase()
+                val hits = keywords.filter { lower.contains(it) }
+                if (hits.isNotEmpty()) {
+                    val rootedMount = source.startsWith("mount") &&
+                        mountKeywords.any { containsToken(lower, it) } &&
+                        (lower.contains("/data/adb") || lower.contains("/debug_ramdisk") || lower.contains("/.magisk") || lower.contains("/sbin") || lower.contains("overlay"))
+                    val runtimeMarkerHit = exactRuntimeMarkers.any { containsToken(lower, it) }
+                    val exactPropLeak = source == "getprop" &&
+                        exactPropMarkers.any { containsToken(lower, it) } &&
+                        (line.contains("[") || line.contains("ro.") || line.contains("persist.") || line.contains("vendor."))
+                    val exactServiceLeak = source == "service" &&
+                        exactServiceMarkers.any {
+                            containsToken(lower, it)
+                        }
+                    val mappedLeak = source.startsWith("maps") &&
+                        runtimeMarkerHit &&
+                        (lower.contains("/data/adb") || lower.contains("/debug_ramdisk") || lower.contains("/sbin") || lower.contains("memfd:") || lower.contains("(deleted)"))
+                    val unixLeak = source == "unix" &&
+                        runtimeMarkerHit &&
+                        (lower.contains("@") || lower.contains("/dev/") || lower.contains("socket"))
+                    val confirmed = rootedMount || exactPropLeak || exactServiceLeak || mappedLeak || unixLeak
+                    if (confirmed) {
+                        evidence += "$source ${hits.take(3).joinToString(",")} -> ${line.take(140)}"
+                        groupedSources += sourceGroup(source)
+                        criticalHits++
+                        if (rootedMount) mountHit = true
+                    }
+                }
+                if (evidence.size >= limit) return
+            }
+        }
+
+        try {
+            collectHits("maps:self", File("/proc/self/maps").useLines { it.toList().asSequence() }, 6)
+        } catch (_: Exception) {}
+        try {
+            collectHits("maps:init", File("/proc/1/maps").useLines { it.toList().asSequence() }, 10)
+        } catch (_: Exception) {}
+        try {
+            collectHits("unix", File("/proc/net/unix").useLines { it.toList().asSequence() }, 14)
+        } catch (_: Exception) {}
+        try {
+            collectHits("mounts", File("/proc/mounts").useLines { it.toList().asSequence() }, 18)
+        } catch (_: Exception) {}
+        try {
+            collectHits("mountinfo", File("/proc/1/mountinfo").useLines { it.toList().asSequence() }, 22)
+        } catch (_: Exception) {}
+        try {
+            val output = Runtime.getRuntime().exec("getprop").inputStream.bufferedReader().readText()
+            collectHits("getprop", output.lineSequence(), 26)
+        } catch (_: Exception) {}
+        try {
+            val output = Runtime.getRuntime().exec("service list").inputStream.bufferedReader().readText()
+            collectHits("service", output.lineSequence(), 30)
+        } catch (_: Exception) {}
+
+        val detected = mountHit ||
+            (groupedSources.contains("maps") && groupedSources.contains("unix")) ||
+            (!trustedLocked && groupedSources.contains("maps") && criticalHits >= 2)
+
+        return listOf(
+            det(
+                "hardcoded_framework_sweep",
+                "Runtime Artifact Sweep",
+                DetectionCategory.MAGISK,
+                Severity.HIGH,
+                "Cross-checks root framework traces across memory maps, sockets, mounts, services and properties",
+                detected,
+                evidence.take(10).joinToString("\n").ifEmpty { null }
+            )
         )
+    }
 
-        romProps.forEach { (prop, rom) ->
+    private fun checkLineageServices(): List<DetectionItem> {
+        val detected = linkedSetOf<String>()
+        try {
+            val process = Runtime.getRuntime().exec("service list")
+            val output = process.inputStream.bufferedReader().readText()
+            process.waitFor()
+            output.lineSequence().forEach { line ->
+                val lower = line.lowercase()
+                lineageServices.filter { lower.contains(it.lowercase()) }.forEach { _ ->
+                    detected += line.trim().take(160)
+                }
+            }
+        } catch (_: Exception) {}
+        return listOf(
+            det(
+                "lineage_services",
+                "LineageOS Services",
+                DetectionCategory.CUSTOM_ROM,
+                Severity.MEDIUM,
+                "Scans binder service list for LineageOS hardware, health, livedisplay and touch services",
+                detected.isNotEmpty(),
+                detected.take(10).joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkLineagePermissions(): List<DetectionItem> {
+        val detected = linkedSetOf<String>()
+        val pm = context.packageManager
+        lineagePermissions.forEach { permission ->
+            try {
+                pm.getPermissionInfo(permission, 0)
+                detected += permission
+            } catch (_: Exception) {}
+        }
+        return listOf(
+            det(
+                "lineage_permissions",
+                "LineageOS Platform Permissions",
+                DetectionCategory.CUSTOM_ROM,
+                Severity.MEDIUM,
+                "Checks for LineageOS-specific platform permissions exposed by the framework",
+                detected.isNotEmpty(),
+                detected.joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkLineageInitFiles(): List<DetectionItem> {
+        val detected = linkedSetOf<String>()
+        lineageInitFiles.forEach { path ->
+            if (File(path).exists()) {
+                detected += path
+            }
+        }
+        return listOf(
+            det(
+                "lineage_files",
+                "LineageOS Init / Framework Files",
+                DetectionCategory.CUSTOM_ROM,
+                Severity.MEDIUM,
+                "Checks for LineageOS init rc, platform xml and framework jar artifacts",
+                detected.isNotEmpty(),
+                detected.joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkLineageSepolicy(): List<DetectionItem> {
+        val detected = linkedSetOf<String>()
+        lineageSepolicyFiles.forEach { path ->
+            val file = File(path)
+            if (!file.exists() || !file.canRead()) return@forEach
+            val content = runCatching { file.readText() }.getOrDefault("")
+            val lower = content.lowercase()
+            val count = Regex("lineage").findAll(lower).count()
+            if (count > 0) {
+                detected += "$path contains 'lineage' $count times"
+            }
+        }
+        return listOf(
+            det(
+                "lineage_sepolicy",
+                "LineageOS Sepolicy Traces",
+                DetectionCategory.CUSTOM_ROM,
+                Severity.MEDIUM,
+                "Scans readable sepolicy cil files for repeated lineage markers",
+                detected.isNotEmpty(),
+                detected.joinToString("\n").ifEmpty { null }
+            )
+        )
+    }
+
+    private fun checkCustomRom(): List<DetectionItem> {
+        val indicators = linkedSetOf<String>()
+        var strongSignals = 0
+
+        customRomProps.forEach { (prop, rom) ->
             val v = getProp(prop)
-            if (v.isNotEmpty()) indicators += "$rom ($v)"
+            if (v.isNotEmpty()) {
+                indicators += "$rom ($v)"
+                strongSignals++
+            }
         }
 
         val buildFields = listOf(
@@ -1360,41 +1402,35 @@ class RootDetector(private val context: Context) {
             "BRAND" to (android.os.Build.BRAND ?: ""),
             "MANUFACTURER" to (android.os.Build.MANUFACTURER ?: "")
         )
-        val romKeywords = mapOf(
-            "lineage" to "LineageOS",
-            "crdroid" to "crDroid",
-            "evolution" to "EvolutionX",
-            "evox" to "EvolutionX",
-            "pixelos" to "PixelOS",
-            "yaap" to "YAAP",
-            "pixel experience" to "PixelExperience",
-            "pixelexperience" to "PixelExperience",
-            "arrow" to "ArrowOS",
-            "havoc" to "HavocOS",
-            "derpfest" to "DerpFest",
-            "elixir" to "ProjectElixir",
-            "superior" to "SuperiorOS",
-            "spark" to "SparkOS",
-            "bliss" to "BlissROMs",
-            "rising" to "RisingOS",
-            "matrixx" to "Project Matrixx",
-            "nameless" to "Nameless AOSP",
-            "aicp" to "AICP",
-            "ancient" to "AncientOS",
-            "afterlife" to "AfterLifeOS",
-            "cherish" to "CherishOS",
-            "syberia" to "SyberiaOS",
-            "xtended" to "Xtended",
-            "dotos" to "DotOS",
-            "awaken" to "AwakenOS",
-            "pixys" to "PixysOS",
-            "phhgsi" to "PHH-GSI"
+        val searchableKeywords = setOf(
+            "lineage",
+            "crdroid",
+            "evolution",
+            "evox",
+            "pixelos",
+            "yaap",
+            "pixel experience",
+            "pixelexperience",
+            "derpfest",
+            "rising",
+            "matrixx",
+            "nameless",
+            "aicp",
+            "syberia",
+            "awaken",
+            "pixys",
+            "phhgsi"
         )
+
+        fun containsRomToken(text: String, keyword: String): Boolean {
+            val escaped = Regex.escape(keyword.lowercase()).replace("\\ ", "\\\\s+")
+            return Regex("(^|[^a-z0-9])$escaped([^a-z0-9]|$)", RegexOption.IGNORE_CASE).containsMatchIn(text)
+        }
 
         buildFields.forEach { (field, value) ->
             val lower = value.lowercase()
-            romKeywords.forEach { (keyword, name) ->
-                if (lower.contains(keyword)) {
+            customRomKeywords.forEach { (keyword, name) ->
+                if (keyword in searchableKeywords && containsRomToken(lower, keyword)) {
                     indicators += "$name in $field"
                 }
             }
@@ -1402,28 +1438,25 @@ class RootDetector(private val context: Context) {
 
         runCatching {
             val allProps = Runtime.getRuntime().exec("getprop").inputStream.bufferedReader().readText().lowercase()
-            romKeywords.forEach { (keyword, name) ->
-                if (allProps.contains(keyword)) {
+            customRomKeywords.forEach { (keyword, name) ->
+                if (keyword in searchableKeywords && containsRomToken(allProps, keyword)) {
                     indicators += "$name in getprop"
                 }
             }
         }
 
-        listOf(
-            "/system/etc/lineage-release",
-            "/system/lineage",
-            "/system/etc/pixelos.version",
-            "/system/etc/yaap.version",
-            "/system/etc/crdroid.build",
-            "/system/etc/evolution.version"
-        ).forEach { path ->
-            if (java.io.File(path).exists()) indicators += path
+        customRomFiles.forEach { path ->
+            if (java.io.File(path).exists()) {
+                indicators += path
+                strongSignals++
+            }
         }
 
+        val detected = strongSignals > 0 || indicators.size >= 2
         return listOf(det(
-            "custom_rom", "Custom / Third-Party ROM", DetectionCategory.CUSTOM_ROM, Severity.MEDIUM,
-            "LineageOS, YAAP, PixelOS, PixelExperience, crDroid, EvolutionX and many other aftermarket ROM families",
-            indicators.isNotEmpty(), indicators.distinct().joinToString("\n").ifEmpty { null }
+            "custom_rom", "Aftermarket ROM", DetectionCategory.CUSTOM_ROM, Severity.MEDIUM,
+            "Looks for custom ROM props, framework files and stronger build identifiers from popular aftermarket ROMs",
+            detected, indicators.joinToString("\n").ifEmpty { null }
         ))
     }
 }

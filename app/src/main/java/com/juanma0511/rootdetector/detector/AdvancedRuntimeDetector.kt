@@ -28,13 +28,7 @@ object AdvancedRuntimeDetector {
 
             val maps = File("/proc/$zygotePid/maps").readText()
 
-            val suspicious = listOf(
-                "zygisk",
-                "magisk",
-                "lsposed",
-                "riru",
-                "edxp"
-            )
+            val suspicious = HardcodedSignals.strongRuntimeKeywords
 
             suspicious.forEach {
                 if (maps.contains(it, true)) {

@@ -5,31 +5,13 @@ import java.util.concurrent.TimeUnit
 
 object DetectorTrust {
 
-    private val directSystemMounts = setOf(
-        "/system", "/system_root", "/system_ext", "/vendor", "/product", "/odm"
-    )
+    private val directSystemMounts = HardcodedSignals.directSystemMounts.toSet()
 
-    private val stockVendorMountMarkers = listOf(
-        "oneplus", "oplus", "coloros", "heytap", "realme",
-        "my_product", "my_region", "my_company", "my_engineering", "my_stock"
-    )
+    private val stockVendorMountMarkers = HardcodedSignals.stockVendorMountMarkers
 
-    private val rootKeywords = listOf(
-        "magisk", "zygisk", "zygisknext", "zygiskassistant", "lsposed", "lspatch",
-        "riru", "xposed", "edxp", "kernelsu", "ksu", "ksunext", "apatch",
-        "shamiko", "susfs", "trickystore", "playintegrityfix", "integrityfix",
-        "safetynetfix", "hidemyapplist", "nohello", "frida", "frida-gadget",
-        "magiskdelta", "kitsune", "resetprop", "denylist", "zygiskdetach",
-        "momo", "kernelpatch", "magicaloverlayfs", "overlayfs"
-    )
+    private val rootKeywords = HardcodedSignals.rootKeywords
 
-    private val rootPaths = listOf(
-        "/debug_ramdisk", "/.magisk", "/sbin/.magisk",
-        "/metadata/adb/modules", "/mnt/.magisk/modules",
-        "/data/adb/lsposed", "/data/adb/riru", "/data/adb/tricky_store",
-        "/data/adb/trickystore", "/data/adb/shamiko", "/data/adb/denylist",
-        "/data/adb/modules", "/data/adb/modules_update"
-    )
+    private val rootPaths = HardcodedSignals.rootPaths
 
     fun frameworkKeywords(): List<String> = rootKeywords
 
@@ -96,10 +78,7 @@ object DetectorTrust {
 
     fun isSuspiciousDeletedOrMemfdMap(line: String, trustedLocked: Boolean): Boolean {
         val lower = line.lowercase()
-        val ignoredMarkers = listOf(
-            "jit-cache", "jit-zygote-cache", "[anon:dalvik", "[anon:art", "[anon:scudo",
-            "dmabuf", "ashmem", "font", "boot.oat", "system@framework", "app.dex", "base.odex"
-        )
+        val ignoredMarkers = HardcodedSignals.ignoredMemfdMarkers
         if (ignoredMarkers.any { lower.contains(it) }) return false
         val rootKeywordHit = rootKeywords.any { lower.contains(it) }
         val rootPathHit = rootPaths.any { lower.contains(it) }
@@ -112,12 +91,9 @@ object DetectorTrust {
 
     fun isLikelyRuntimeInjectionEvidence(value: String, trustedLocked: Boolean): Boolean {
         val lower = value.lowercase()
-        val strongKeywords = listOf(
-            "zygisk", "lsposed", "lspatch", "riru", "xposed", "edxp",
-            "shamiko", "trickystore", "playintegrityfix", "kernelsu", "apatch", "frida"
-        )
+        val strongKeywords = HardcodedSignals.strongRuntimeKeywords
         if (strongKeywords.any { lower.contains(it) }) return true
-        val genericHook = listOf("dobby", "shadowhook", "sandhook", "whale").any { lower.contains(it) }
+        val genericHook = HardcodedSignals.genericHookKeywords.any { lower.contains(it) }
         if (!genericHook) return false
         val rootedContext = rootPaths.any { lower.contains(it) } || lower.contains("memfd:") || lower.contains("(deleted)")
         return rootedContext && !trustedLocked
@@ -126,7 +102,7 @@ object DetectorTrust {
     private fun hasExplicitRootArtifacts(): Boolean {
         if (rootPaths.any { path -> File(path).exists() }) return true
 
-        val moduleDirs = listOf("/data/adb/modules", "/data/adb/modules_update", "/metadata/adb/modules", "/mnt/.magisk/modules")
+        val moduleDirs = HardcodedSignals.moduleDirs
         moduleDirs.forEach { dirPath ->
             File(dirPath).listFiles()?.forEach { module ->
                 val name = module.name.lowercase()
