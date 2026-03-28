@@ -8,6 +8,10 @@ import com.juanma0511.rootdetector.model.DetectionCategory
 import com.juanma0511.rootdetector.model.DetectionItem
 import com.juanma0511.rootdetector.model.Severity
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 
 class RootDetector(private val context: Context) {
 
@@ -78,6 +82,8 @@ class RootDetector(private val context: Context) {
             ::checkOverlayFS,
             ::checkZygoteFDLeak,
             ::checkProcessCapabilities,
+            ::checkPartitionPatchSkew,
+            ::checkKernelPatchWindow,
             ::checkSpoofedProps,
             ::checkSuspiciousMountSources,
             ::checkMountInfoConsistency,
@@ -720,6 +726,93 @@ class RootDetector(private val context: Context) {
             .bufferedReader().lineSequence().any { it.contains(name) }
     } catch (_: Exception) { false }
 
+    private fun parseUtcPropDate(value: String): Date? {
+        val trimmed = value.trim()
+        val seconds = trimmed.toLongOrNull() ?: return null
+        if (seconds <= 0L) return null
+        return Date(seconds * 1000L)
+    }
+
+    private fun parsePatchDate(value: String): Date? {
+        val trimmed = value.trim()
+        if (!Regex("""\d{4}-\d{2}-\d{2}""").matches(trimmed)) return null
+        return runCatching {
+            SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+                timeZone = TimeZone.getTimeZone("UTC")
+                isLenient = false
+            }.parse(trimmed)
+        }.getOrNull()
+    }
+
+    private fun parseKernelBuildDate(): Date? {
+        val candidates = linkedSetOf<String>()
+        runCatching { candidates += File("/proc/version").readText() }
+        runCatching {
+            val uname = Runtime.getRuntime().exec("uname -v").inputStream.bufferedReader().readText().trim()
+            if (uname.isNotEmpty()) candidates += uname
+        }
+        val formatters = listOf(
+            SimpleDateFormat("EEE MMM d HH:mm:ss z yyyy", Locale.US),
+            SimpleDateFormat("EEE MMM dd HH:mm:ss z yyyy", Locale.US)
+        ).onEach {
+            it.timeZone = TimeZone.getTimeZone("UTC")
+            it.isLenient = false
+        }
+        val patterns = listOf(
+            Regex("""[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+[A-Z]{2,5}\s+\d{4}"""),
+            Regex("""[A-Z][a-z]{2}\s+[A-Z][a-z]{2}\s+\d{1,2}\s+\d{2}:\d{2}:\d{2}\s+UTC\s+\d{4}""")
+        )
+        candidates.forEach { raw ->
+            patterns.forEach { regex ->
+                regex.find(raw)?.value?.let { match ->
+                    formatters.forEach { formatter ->
+                        runCatching { formatter.parse(match) }.getOrNull()?.let { return it }
+                    }
+                }
+            }
+        }
+        return null
+    }
+
+    private fun formatDate(value: Date?): String {
+        if (value == null) return "unknown"
+        return SimpleDateFormat("yyyy-MM-dd", Locale.US).apply {
+            timeZone = TimeZone.getTimeZone("UTC")
+        }.format(value)
+    }
+
+    private fun diffDays(a: Date, b: Date): Long =
+        kotlin.math.abs(a.time - b.time) / 86_400_000L
+
+    private fun collectPatchDates(): LinkedHashMap<String, Date> {
+        val collected = linkedMapOf<String, Date>()
+        val patchProps = linkedMapOf(
+            "android_patch" to (Build.VERSION.SECURITY_PATCH ?: ""),
+            "build_patch" to getProp("ro.build.version.security_patch"),
+            "vendor_patch" to getProp("ro.vendor.build.version.security_patch"),
+            "system_ext_patch" to getProp("ro.system_ext.build.version.security_patch"),
+            "product_patch" to getProp("ro.product.build.version.security_patch"),
+            "odm_patch" to getProp("ro.odm.build.version.security_patch"),
+            "bootimage_patch" to getProp("ro.bootimage.build.version.security_patch")
+        )
+        patchProps.forEach { (label, raw) ->
+            parsePatchDate(raw)?.let { collected[label] = it }
+        }
+        val buildUtcProps = linkedMapOf(
+            "build_utc" to getProp("ro.build.date.utc"),
+            "system_utc" to getProp("ro.system.build.date.utc"),
+            "vendor_utc" to getProp("ro.vendor.build.date.utc"),
+            "system_ext_utc" to getProp("ro.system_ext.build.date.utc"),
+            "product_utc" to getProp("ro.product.build.date.utc"),
+            "odm_utc" to getProp("ro.odm.build.date.utc"),
+            "bootimage_utc" to getProp("ro.bootimage.build.date.utc")
+        )
+        buildUtcProps.forEach { (label, raw) ->
+            parseUtcPropDate(raw)?.let { collected[label] = it }
+        }
+        return collected
+    }
+
         private fun checkKernelCmdline(): List<DetectionItem> {
         val suspicious = linkedSetOf<String>()
         try {
@@ -900,6 +993,77 @@ class RootDetector(private val context: Context) {
                 elevated.joinToString("\n").ifEmpty { null }
             )
         )
+    }
+
+    private fun checkPartitionPatchSkew(): List<DetectionItem> {
+        val dates = collectPatchDates()
+        if (dates.size < 2) {
+            return listOf(det(
+                "partition_patch_skew",
+                "Partition Patch Skew",
+                DetectionCategory.SYSTEM_PROPS,
+                Severity.MEDIUM,
+                "Compares Android, vendor, bootimage and partition patch/build dates for large cross-partition drift",
+                false,
+                null
+            ))
+        }
+        val thresholdDays = if (bootLooksLockedAndNormal()) 60L else 30L
+        val oldest = dates.minByOrNull { it.value.time } ?: return emptyList()
+        val newest = dates.maxByOrNull { it.value.time } ?: return emptyList()
+        val driftDays = diffDays(oldest.value, newest.value)
+        val suspicious = linkedSetOf<String>()
+        if (driftDays > thresholdDays) {
+            suspicious += "${oldest.key}=${formatDate(oldest.value)}"
+            suspicious += "${newest.key}=${formatDate(newest.value)}"
+            suspicious += "drift=${driftDays}d threshold=${thresholdDays}d"
+        }
+        return listOf(det(
+            "partition_patch_skew",
+            "Partition Patch Skew",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.MEDIUM,
+            "Compares Android, vendor, bootimage and partition patch/build dates for large cross-partition drift",
+            suspicious.isNotEmpty(),
+            suspicious.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkKernelPatchWindow(): List<DetectionItem> {
+        val kernelDate = parseKernelBuildDate()
+        val patchDates = collectPatchDates()
+        if (kernelDate == null || patchDates.isEmpty()) {
+            return listOf(det(
+                "kernel_patch_window",
+                "Kernel / Patch Window",
+                DetectionCategory.SYSTEM_PROPS,
+                Severity.MEDIUM,
+                "Checks whether kernel build time stays reasonably close to system and security patch dates",
+                false,
+                null
+            ))
+        }
+        val thresholdDays = if (bootLooksLockedAndNormal()) 60L else 30L
+        val closest = patchDates.minByOrNull { diffDays(kernelDate, it.value) } ?: return emptyList()
+        val newest = patchDates.maxByOrNull { it.value.time } ?: return emptyList()
+        val closestDiff = diffDays(kernelDate, closest.value)
+        val newestDiff = diffDays(kernelDate, newest.value)
+        val suspicious = linkedSetOf<String>()
+        if (closestDiff > thresholdDays && newestDiff > thresholdDays) {
+            suspicious += "kernel_build=${formatDate(kernelDate)}"
+            suspicious += "closest_patch=${closest.key}:${formatDate(closest.value)} (${closestDiff}d)"
+            suspicious += "newest_patch=${newest.key}:${formatDate(newest.value)} (${newestDiff}d)"
+            suspicious += "threshold=${thresholdDays}d"
+        }
+        return listOf(det(
+            "kernel_patch_window",
+            "Kernel / Patch Window",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.MEDIUM,
+            "Checks whether kernel build time stays reasonably close to system and security patch dates",
+            suspicious.isNotEmpty(),
+            suspicious.joinToString("\n").ifEmpty { null }
+        ))
     }
 
         private fun checkSpoofedProps(): List<DetectionItem> {
