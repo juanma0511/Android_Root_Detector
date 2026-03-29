@@ -16,8 +16,12 @@ import java.util.TimeZone
 class RootDetector(private val context: Context) {
 
     private val suPaths = HardcodedSignals.suPaths
-    private val rootPackages = HardcodedSignals.rootPackages
-    private val patchedApps = HardcodedSignals.patchedApps
+    private val rootPackages = HardcodedSignals.rootPackages.filterNot {
+        it.contains("keyattestation", ignoreCase = true)
+    }
+    private val patchedApps = HardcodedSignals.patchedApps.filterNot {
+        it.contains("keyattestation", ignoreCase = true)
+    }
     private val warningApps = LinkedHashMap(HardcodedSignals.warningApps)
     private val magiskPaths = HardcodedSignals.magiskPaths
     private val dangerousBinaries = HardcodedSignals.dangerousBinaries
@@ -82,7 +86,6 @@ class RootDetector(private val context: Context) {
             ::checkOverlayFS,
             ::checkZygoteFDLeak,
             ::checkProcessCapabilities,
-            ::checkPartitionPatchSkew,
             ::checkKernelPatchWindow,
             ::checkSpoofedProps,
             ::checkSuspiciousMountSources,
@@ -95,8 +98,7 @@ class RootDetector(private val context: Context) {
             ::checkHiddenMagiskModules,
             ::checkHardcodedFrameworkSweep,
             ::checkTmpfsOnData,
-            ::checkSuTimestamps,
-            ::checkApkInstallSource
+            ::checkSuTimestamps
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -799,12 +801,6 @@ class RootDetector(private val context: Context) {
             parsePatchDate(raw)?.let { collected[label] = it }
         }
         val buildUtcProps = linkedMapOf(
-            "build_utc" to getProp("ro.build.date.utc"),
-            "system_utc" to getProp("ro.system.build.date.utc"),
-            "vendor_utc" to getProp("ro.vendor.build.date.utc"),
-            "system_ext_utc" to getProp("ro.system_ext.build.date.utc"),
-            "product_utc" to getProp("ro.product.build.date.utc"),
-            "odm_utc" to getProp("ro.odm.build.date.utc"),
             "bootimage_utc" to getProp("ro.bootimage.build.date.utc")
         )
         buildUtcProps.forEach { (label, raw) ->
@@ -993,40 +989,6 @@ class RootDetector(private val context: Context) {
                 elevated.joinToString("\n").ifEmpty { null }
             )
         )
-    }
-
-    private fun checkPartitionPatchSkew(): List<DetectionItem> {
-        val dates = collectPatchDates()
-        if (dates.size < 2) {
-            return listOf(det(
-                "partition_patch_skew",
-                "Partition Patch Skew",
-                DetectionCategory.SYSTEM_PROPS,
-                Severity.MEDIUM,
-                "Compares Android, vendor, bootimage and partition patch/build dates for large cross-partition drift",
-                false,
-                null
-            ))
-        }
-        val thresholdDays = if (bootLooksLockedAndNormal()) 60L else 30L
-        val oldest = dates.minByOrNull { it.value.time } ?: return emptyList()
-        val newest = dates.maxByOrNull { it.value.time } ?: return emptyList()
-        val driftDays = diffDays(oldest.value, newest.value)
-        val suspicious = linkedSetOf<String>()
-        if (driftDays > thresholdDays) {
-            suspicious += "${oldest.key}=${formatDate(oldest.value)}"
-            suspicious += "${newest.key}=${formatDate(newest.value)}"
-            suspicious += "drift=${driftDays}d threshold=${thresholdDays}d"
-        }
-        return listOf(det(
-            "partition_patch_skew",
-            "Partition Patch Skew",
-            DetectionCategory.SYSTEM_PROPS,
-            Severity.MEDIUM,
-            "Compares Android, vendor, bootimage and partition patch/build dates for large cross-partition drift",
-            suspicious.isNotEmpty(),
-            suspicious.joinToString("\n").ifEmpty { null }
-        ))
     }
 
     private fun checkKernelPatchWindow(): List<DetectionItem> {
