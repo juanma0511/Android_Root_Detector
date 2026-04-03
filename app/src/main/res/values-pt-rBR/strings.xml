@@ -1,0 +1,14 @@
+<resources>
+    <string name="appearance">Aparência</string>
+    <string name="about">Sobre</string>
+    <string name="theme">Tema</string>
+    <string name="system">Sistema</string>
+    <string name="light">Claro</string>
+    <string name="dark">Escuro</string>
+
+    <string name="developer_role">Desenvolvedor &amp; Kernel Builder</string>
+
+    <string name="designer_role">Designer Júnior ~ Meow</string>
+
+    <string name="built_with">Feito com ❤️ para todos! · Jetpack Compose</string>
+</resources>

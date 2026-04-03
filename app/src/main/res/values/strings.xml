@@ -1,3 +1,22 @@
 <resources>
     <string name="app_name">kknd Detector</string>
+    <string name="appearance">Appearance</string>
+    <string name="about">About</string>
+    <string name="theme">Theme</string>
+    <string name="system">System</string>
+    <string name="light">Light</string>
+    <string name="dark">Dark</string>
+
+    <string name="app_name_footer">kknd Detector</string>
+
+    <string name="developer_name">Juan Ma</string>
+    <string name="developer_role">Developer &amp; Kernel Builder</string>
+
+    <string name="designer_name">OukaroMF</string>
+    <string name="designer_role">Junior Designer ~ Meow</string>
+
+    <string name="github_juan">github.com/juanma0511</string>
+    <string name="github_oukaro">github.com/OukaroMF</string>
+
+    <string name="built_with">Built with ❤️ for everyone! · Jetpack Compose</string>
 </resources>
