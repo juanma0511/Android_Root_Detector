@@ -16,11 +16,21 @@ import java.util.TimeZone
 class RootDetector(private val context: Context) {
 
     private val suPaths = HardcodedSignals.suPaths
+    private val mediumToolPackages = linkedMapOf(
+        "com.dimonvideo.luckypatcher" to "Lucky Patcher",
+        "com.chelpus.lackypatch" to "Lucky Patcher",
+        "com.android.vending.billing.InAppBillingService.COIN" to "Lucky Patcher",
+        "com.android.vending.billing.InAppBillingService.LUCK" to "Lucky Patcher"
+    )
+    private val lsposedHighRiskApps = linkedMapOf(
+        "io.mesalabs.knoxpatch" to "KnoxPatch",
+        "com.omarea.vtools" to "Scene"
+    )
     private val rootPackages = HardcodedSignals.rootPackages.filterNot {
-        it.contains("keyattestation", ignoreCase = true)
+        it.contains("keyattestation", ignoreCase = true) || it in mediumToolPackages.keys
     }
     private val patchedApps = HardcodedSignals.patchedApps.filterNot {
-        it.contains("keyattestation", ignoreCase = true)
+        it.contains("keyattestation", ignoreCase = true) || it in mediumToolPackages.keys
     }
     private val warningApps = LinkedHashMap(HardcodedSignals.warningApps)
     private val magiskPaths = HardcodedSignals.magiskPaths
@@ -54,7 +64,9 @@ class RootDetector(private val context: Context) {
         val checks: List<() -> List<DetectionItem>> = listOf(
             ::checkSuBinaries,
             ::checkRootPackages,
+            ::checkLsposedCompanionApps,
             ::checkPatchedApps,
+            ::checkMediumRiskTools,
             ::checkWarningApps,
             ::checkBuildTags,
             ::checkDangerousProps,
@@ -162,6 +174,38 @@ class RootDetector(private val context: Context) {
             "patched_apps", "Patched / Modified Apps", DetectionCategory.ROOT_APPS, Severity.MEDIUM,
             "ReVanced, CorePatch, Play Integrity Fix, TrickyStore, HMA, LSPosed and companion tools",
             regularFound.isNotEmpty(), regularFound.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkLsposedCompanionApps(): List<DetectionItem> {
+        val pm = context.packageManager
+        val found = linkedSetOf<String>()
+        lsposedHighRiskApps.forEach { (pkg, label) ->
+            when {
+                isPackageInstalled(pm, pkg) -> found += "$label ($pkg)"
+                pm.getLaunchIntentForPackage(pkg) != null -> found += "$label ($pkg launchable)"
+            }
+        }
+        return listOf(det(
+            "lsposed_companions", "LSPosed Companion Apps", DetectionCategory.ROOT_APPS, Severity.HIGH,
+            "Detects LSPosed companion apps and modules such as KnoxPatch and Scene",
+            found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkMediumRiskTools(): List<DetectionItem> {
+        val pm = context.packageManager
+        val found = linkedSetOf<String>()
+        mediumToolPackages.forEach { (pkg, label) ->
+            when {
+                isPackageInstalled(pm, pkg) -> found += "$label ($pkg)"
+                pm.getLaunchIntentForPackage(pkg) != null -> found += "$label ($pkg launchable)"
+            }
+        }
+        return listOf(det(
+            "medium_risk_tools", "App Patchers / Mod Tools", DetectionCategory.ROOT_APPS, Severity.MEDIUM,
+            "Detects medium-risk app patching and modification tools such as Lucky Patcher",
+            found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
         ))
     }
 
