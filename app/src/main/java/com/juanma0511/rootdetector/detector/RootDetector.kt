@@ -56,7 +56,6 @@ class RootDetector(private val context: Context) {
             ::checkRootPackages,
             ::checkPatchedApps,
             ::checkWarningApps,
-            ::checkOplusPackages,
             ::checkBuildTags,
             ::checkDangerousProps,
             ::checkRootBinaries,
@@ -178,26 +177,6 @@ class RootDetector(private val context: Context) {
         return listOf(det(
             "warning_apps", "Non-Rooted Power Apps", DetectionCategory.ROOT_APPS, Severity.LOW,
             "Shizuku, Termux, MT Manager, LADB and similar tools are not root by themselves, but they are useful for debugging, shell access and package editing",
-            found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
-        ))
-    }
-
-    private fun checkOplusPackages(): List<DetectionItem> {
-        val found = linkedSetOf<String>()
-        val pm = context.packageManager
-        try {
-            @Suppress("DEPRECATION")
-            val installedPackages = pm.getInstalledPackages(PackageManager.GET_META_DATA or PackageManager.MATCH_UNINSTALLED_PACKAGES)
-            installedPackages.forEach { info ->
-                val packageName = info.packageName
-                if (isOplusMarker(packageName) && pm.getLaunchIntentForPackage(packageName) != null) {
-                    found += "$packageName (launchable)"
-                }
-            }
-        } catch (_: Exception) {}
-        return listOf(det(
-            "oplus_apps", "Oplus / OplusEx Apps", DetectionCategory.ROOT_APPS, Severity.LOW,
-            "Apps whose package names contain oplu or oplusex are treated as low-severity vendor utilities unless stronger root evidence also exists",
             found.isNotEmpty(), found.joinToString("\n").ifEmpty { null }
         ))
     }
