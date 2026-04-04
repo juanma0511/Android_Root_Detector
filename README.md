@@ -2,17 +2,6 @@
 
 ![Banner](art/banner.png)
 
-Kknd Root Detector is a lightweight Android application that checks whether a device may be rooted or running in a potentially insecure environment.
-
-The project demonstrates common techniques used by security‑sensitive Android apps to detect root access and system modifications.
-
-This project is intended mainly for:
-
-- Android security learning
-- Developers implementing root detection
-- Reverse engineering practice
-- Educational demonstrations
-
 Kknd Root Detector is a lightweight Android application that checks
 whether a device may be rooted or running in a potentially insecure
 environment.

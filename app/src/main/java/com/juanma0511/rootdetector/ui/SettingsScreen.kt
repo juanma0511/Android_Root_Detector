@@ -1,5 +1,6 @@
 package com.juanma0511.rootdetector.ui
 
+import com.juanma0511.rootdetector.R
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
@@ -22,6 +23,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -43,11 +45,11 @@ fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
 
-        SettingsSection(title = "Appearance") {
+        SettingsSection(title = stringResource(R.string.appearance)) {
             ThemeSelector(currentTheme = currentTheme, onThemeChange = onThemeChange)
         }
 
-        SettingsSection(title = "About") {
+        SettingsSection(title = stringResource(R.string.about)) {
             CreditsCard(
                 onGithubClick = {
                     openExternalUrl(context, "https://github.com/juanma0511")
@@ -61,7 +63,7 @@ fun SettingsScreen(
         Spacer(Modifier.height(16.dp))
 
         Text(
-            "kknd Detector",
+            stringResource(R.string.app_name_footer),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
             modifier = Modifier.fillMaxWidth(),
@@ -96,7 +98,7 @@ fun SettingsSection(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(
-            title.uppercase(),
+            title.uppercase(java.util.Locale.getDefault()),
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.primary,
             fontWeight = FontWeight.Bold,
@@ -131,7 +133,7 @@ fun ThemeSelector(
             )
             Spacer(Modifier.width(10.dp))
             Text(
-                "Theme",
+                stringResource(R.string.theme),
                 style = MaterialTheme.typography.bodyLarge,
                 fontWeight = FontWeight.Medium
             )
@@ -144,21 +146,21 @@ fun ThemeSelector(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             ThemeChip(
-                label = "System",
+                label = stringResource(R.string.system),
                 icon = Icons.Outlined.SettingsBrightness,
                 selected = currentTheme == ThemeMode.SYSTEM,
                 onClick = { onThemeChange(ThemeMode.SYSTEM) },
                 modifier = Modifier.weight(1f)
             )
             ThemeChip(
-                label = "Light",
+                label = stringResource(R.string.light),
                 icon = Icons.Filled.LightMode,
                 selected = currentTheme == ThemeMode.LIGHT,
                 onClick = { onThemeChange(ThemeMode.LIGHT) },
                 modifier = Modifier.weight(1f)
             )
             ThemeChip(
-                label = "Dark",
+                label = stringResource(R.string.dark),
                 icon = Icons.Filled.DarkMode,
                 selected = currentTheme == ThemeMode.DARK,
                 onClick = { onThemeChange(ThemeMode.DARK) },
@@ -225,12 +227,12 @@ fun CreditsCard(
 
             Column {
                 Text(
-                    "Juan Ma",
+                    stringResource(R.string.developer_name),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    "Developer & Kernel Builder",
+                    stringResource(R.string.developer_role),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -251,7 +253,7 @@ fun CreditsCard(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                "github.com/juanma0511",
+               stringResource(R.string.github_juan),
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp
             )
@@ -277,12 +279,12 @@ fun CreditsCard(
 
             Column {
                 Text(
-                    "OukaroMF",
+                    stringResource(R.string.designer_name),
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    "Junior Designer ~ Meow",
+                    stringResource(R.string.designer_role),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -301,14 +303,14 @@ fun CreditsCard(
             )
             Spacer(Modifier.width(8.dp))
             Text(
-                "github.com/OukaroMF",
+                stringResource(R.string.github_oukaro),
                 fontWeight = FontWeight.Medium,
                 fontSize = 14.sp
             )
         }
 
         Text(
-            "Built with ❤️ for everyone! · Jetpack Compose",
+            stringResource(R.string.built_with),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,
