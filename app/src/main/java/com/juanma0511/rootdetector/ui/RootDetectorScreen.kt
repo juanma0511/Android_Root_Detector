@@ -391,6 +391,31 @@ fun DetectionItemCard(item: DetectionItem) {
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    Spacer(Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(999.dp),
+                            color = accentSurface
+                        ) {
+                            Text(
+                                categoryLabel(item.category),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Medium,
+                                color = accentContent.copy(alpha = if (isDark) 0.86f else 0.92f)
+                            )
+                        }
+                        if (item.detected) {
+                            Text(
+                                "Hold to copy",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = accentContent.copy(alpha = if (isDark) 0.62f else 0.72f)
+                            )
+                        }
+                    }
                 }
 
                 Surface(
@@ -448,6 +473,20 @@ private fun categoryIcon(category: DetectionCategory): ImageVector = when (categ
     DetectionCategory.FRIDA         -> Icons.Outlined.BugReport
     DetectionCategory.EMULATOR      -> Icons.Outlined.PhoneAndroid
     DetectionCategory.CUSTOM_ROM    -> Icons.Outlined.Smartphone
+}
+
+private fun categoryLabel(category: DetectionCategory): String = when (category) {
+    DetectionCategory.SU_BINARIES -> "SU"
+    DetectionCategory.ROOT_APPS -> "Apps"
+    DetectionCategory.SYSTEM_PROPS -> "Props"
+    DetectionCategory.MOUNT_POINTS -> "Mounts"
+    DetectionCategory.BUILD_TAGS -> "Build"
+    DetectionCategory.BUSYBOX -> "Binaries"
+    DetectionCategory.WRITABLE_PATHS -> "Paths"
+    DetectionCategory.MAGISK -> "Runtime"
+    DetectionCategory.FRIDA -> "Frida"
+    DetectionCategory.EMULATOR -> "Emulator"
+    DetectionCategory.CUSTOM_ROM -> "ROM"
 }
 
 private fun buildDetectionCopyText(item: DetectionItem): String {
