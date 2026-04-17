@@ -22,9 +22,6 @@ This project is intended mainly for:
 
 The application performs several checks typically used in root detection systems:
 
-The application performs several checks typically used in root detection
-systems:
-
 - Detection of **`su` binary** in common system paths
 - Detection of **known root management apps**
 - Basic **system integrity checks**
