@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import com.juanma0511.rootdetector.model.DetectionCategory
 import com.juanma0511.rootdetector.model.DetectionItem
 import com.juanma0511.rootdetector.model.Severity
@@ -116,7 +117,11 @@ class RootDetector(private val context: Context) {
             ::checkLdPreload,
             ::checkSeccompMode,
             ::checkTracerPid,
-            ::checkSUSFS
+            ::checkSUSFS,
+            ::checkSOTER,
+            ::checkXposedFramework,
+            ::checkADBNetwork,
+            ::checkDeveloperOptions
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -2078,6 +2083,136 @@ class RootDetector(private val context: Context) {
             "susfs", "SUSFS File Hide Module",
             DetectionCategory.MAGISK, Severity.HIGH,
             "Detects the SUSFS kernel module used to hide root files and processes from integrity checks",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSOTER(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val bypassPaths = listOf(
+            "/data/adb/modules/soterbypass", "/data/adb/modules/SoterBypass",
+            "/data/adb/modules/soter_bypass", "/data/adb/modules/SOTERBypass"
+        )
+        bypassPaths.filter { File(it).exists() }.forEach { evidence += "bypass module: $it" }
+        val soterVersion = getProp("ro.tee.soter.version")
+        val soterUid = getProp("ro.tee.soter.uid")
+        if (soterVersion.isNotEmpty()) {
+            val soterSockets = collectNetUnixMatches(listOf("soter_service", "soterservice"))
+            if (soterSockets.isEmpty()) {
+                evidence += "ro.tee.soter.version=$soterVersion uid=$soterUid but soter_service socket absent — bypass or hook"
+            }
+            try {
+                val sm = Class.forName("android.os.ServiceManager")
+                val getService = sm.getDeclaredMethod("getService", String::class.java)
+                getService.isAccessible = true
+                val binder = getService.invoke(null, "soter_service")
+                if (binder == null) {
+                    evidence += "soter_service binder null despite ro.tee.soter.version=$soterVersion"
+                }
+            } catch (_: Exception) {}
+        }
+        try {
+            Class.forName("com.tencent.soter.core.sotercore.SoterCoreBeforeTreble")
+            if (collectNetUnixMatches(listOf("soter")).isEmpty()) {
+                evidence += "SOTER core class loadable but no active SOTER socket — possible hook"
+            }
+        } catch (_: ClassNotFoundException) {}
+        return listOf(det(
+            "soter_check", "SOTER TEE Attestation",
+            DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
+            "Checks SOTER TEE props, service binder availability, socket presence and bypass Magisk modules",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkXposedFramework(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val xposedClasses = listOf(
+            "de.robv.android.xposed.XposedBridge",
+            "de.robv.android.xposed.XposedHelpers",
+            "de.robv.android.xposed.XC_MethodHook",
+            "io.github.lsposed.lspd.nativebridge.ShadowClassLoader",
+            "org.lsposed.lspd.nativebridge.ShadowClassLoader",
+            "me.weishu.epic.art.EpicNative"
+        )
+        xposedClasses.forEach { cls ->
+            try {
+                Class.forName(cls)
+                evidence += "class present: $cls"
+            } catch (_: ClassNotFoundException) {
+            } catch (_: Exception) {}
+        }
+        try {
+            throw Exception("stack_probe")
+        } catch (e: Exception) {
+            e.stackTrace.forEach { frame ->
+                val cls = frame.className
+                if (cls.contains("xposed", ignoreCase = true) ||
+                    cls.contains("lspd", ignoreCase = true) ||
+                    cls.contains("edxposed", ignoreCase = true)) {
+                    evidence += "stack: $frame"
+                }
+            }
+        }
+        val xposedFiles = listOf(
+            "/system/xposed.prop",
+            "/system/framework/XposedBridge.jar",
+            "/system/lib/libxposed_art.so",
+            "/system/lib64/libxposed_art.so"
+        )
+        xposedFiles.filter { File(it).exists() }.forEach { evidence += "file: $it" }
+        return listOf(det(
+            "xposed_framework", "Xposed / LSPosed Framework",
+            DetectionCategory.MAGISK, Severity.HIGH,
+            "Detects Xposed, EdXposed and LSPosed via class loading, stack trace inspection and filesystem artifacts",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkADBNetwork(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val tcpPort = getProp("service.adb.tcp.port")
+        val persistPort = getProp("persist.adb.tcp.port")
+        if (tcpPort.isNotEmpty() && tcpPort != "-1" && tcpPort != "0")
+            evidence += "service.adb.tcp.port=$tcpPort"
+        if (persistPort.isNotEmpty() && persistPort != "-1" && persistPort != "0")
+            evidence += "persist.adb.tcp.port=$persistPort"
+        listOf("/proc/net/tcp", "/proc/net/tcp6").forEach { netFile ->
+            try {
+                File(netFile).forEachLine { line ->
+                    val fields = line.trim().split(Regex("\\s+"))
+                    if (fields.size < 4 || fields[0] == "sl") return@forEachLine
+                    val port = fields[1].substringAfter(":").toIntOrNull(16) ?: return@forEachLine
+                    if (port == 5555 && fields[3] == "0A")
+                        evidence += "$netFile: ADB port 5555 listening"
+                }
+            } catch (_: Exception) {}
+        }
+        return listOf(det(
+            "adb_network", "ADB Network / TCP Debugging",
+            DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
+            "ADB over TCP (port 5555) enables full shell access wirelessly — strong tamper indicator on production devices",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkDeveloperOptions(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        try {
+            val cr = context.contentResolver
+            if (Settings.Global.getInt(cr, Settings.Global.DEVELOPMENT_SETTINGS_ENABLED, 0) == 1)
+                evidence += "developer options enabled"
+            if (Settings.Global.getInt(cr, Settings.Global.ADB_ENABLED, 0) == 1)
+                evidence += "USB debugging (ADB) enabled"
+            if (Settings.Global.getInt(cr, "oem_unlock_allowed_by_user", -1) == 1)
+                evidence += "OEM unlock allowed by user"
+            if (Settings.Global.getInt(cr, "mock_location", -1) == 1)
+                evidence += "mock location enabled"
+        } catch (_: Exception) {}
+        return listOf(det(
+            "developer_options", "Developer Options / USB Debugging",
+            DetectionCategory.SYSTEM_PROPS, Severity.MEDIUM,
+            "Developer mode, ADB access and OEM unlock are prerequisites for rooting and runtime tampering",
             evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
         ))
     }

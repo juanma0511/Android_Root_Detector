@@ -2080,6 +2080,150 @@ static void detectApatchExtra() {
     }
 }
 
+static void detectSOTERBypass() {
+    const char* soter_bypass_paths[] = {
+        "/data/adb/modules/soterbypass",
+        "/data/adb/modules/SoterBypass",
+        "/data/adb/modules/soter_bypass",
+        "/data/adb/modules/SOTERBypass",
+        nullptr
+    };
+    for (int i = 0; soter_bypass_paths[i]; i++) {
+        if (fexists(soter_bypass_paths[i])) {
+            add("soter_bypass", "SOTER Attestation Bypass Module",
+                std::string("SOTER bypass module: ") + soter_bypass_paths[i]);
+            return;
+        }
+    }
+    char soter_ver[256]{};
+    if (__system_property_get("ro.tee.soter.version", soter_ver) > 0 && strlen(soter_ver) > 0) {
+        bool soter_socket_found = false;
+        std::ifstream unix_sock("/proc/net/unix");
+        if (unix_sock) {
+            std::string line;
+            while (std::getline(unix_sock, line)) {
+                if (contains_ci(line, "soter_service") || contains_ci(line, "soterservice")) {
+                    soter_socket_found = true;
+                    break;
+                }
+            }
+        }
+        if (!soter_socket_found) {
+            add("soter_service_missing", "SOTER Service Absent",
+                std::string("ro.tee.soter.version=") + soter_ver +
+                " but soter_service socket absent — bypass or hook active");
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (!contains_ci(line, "soter")) continue;
+            if (line.find("/system/") != std::string::npos ||
+                line.find("/vendor/") != std::string::npos) continue;
+            size_t sp = line.rfind(' ');
+            std::string path = sp != std::string::npos ? line.substr(sp + 1) : line;
+            add("soter_hook_maps", "SOTER Hook in Memory Maps",
+                "Suspicious SOTER mapping: " + path.substr(0, 80));
+            return;
+        }
+    }
+}
+
+static void detectXposedNative() {
+    const char* xposed_paths[] = {
+        "/system/xposed.prop",
+        "/system/framework/XposedBridge.jar",
+        "/system/lib/libxposed_art.so",
+        "/system/lib64/libxposed_art.so",
+        "/system/lib/libart.so.backup",
+        "/system/lib64/libart.so.backup",
+        "/data/adb/modules/xposed",
+        "/data/adb/modules/Xposed",
+        "/data/adb/modules/edxposed",
+        "/data/adb/modules/EdXposed",
+        nullptr
+    };
+    for (int i = 0; xposed_paths[i]; i++) {
+        if (fexists(xposed_paths[i])) {
+            add("xposed_file", "Xposed Framework File",
+                std::string("Xposed artifact: ") + xposed_paths[i]);
+            return;
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (!contains_ci(line, "xposedbridge") && !contains_ci(line, "xposed_art") &&
+                !contains_ci(line, "edxposed")) continue;
+            size_t sp = line.rfind(' ');
+            std::string path = sp != std::string::npos ? line.substr(sp + 1) : line;
+            if (path.find("/system/") == 0) continue;
+            add("xposed_maps", "Xposed in Memory Maps", path.substr(0, 90));
+            return;
+        }
+    }
+    std::ifstream unix_file("/proc/net/unix");
+    if (unix_file) {
+        std::string line;
+        while (std::getline(unix_file, line)) {
+            if (contains_ci(line, "xposed") || contains_ci(line, "edxposed")) {
+                size_t sp = line.rfind(' ');
+                std::string name = sp != std::string::npos ? line.substr(sp + 1) : line;
+                add("xposed_socket", "Xposed Unix Socket",
+                    "Xposed socket: " + name.substr(0, 60));
+                return;
+            }
+        }
+    }
+}
+
+static void detectMapsFiltering() {
+    std::ifstream maps("/proc/self/maps");
+    if (!maps) return;
+    int count = 0;
+    std::string line;
+    while (std::getline(maps, line)) count++;
+    if (count > 0 && count < 25) {
+        char buf[80];
+        snprintf(buf, sizeof(buf),
+            "Only %d regions in /proc/self/maps — SUSFS/hide filtering active", count);
+        add("maps_filtered", "Memory Maps Being Filtered", buf);
+    }
+}
+
+static void detectRiruNative() {
+    const char* riru_paths[] = {
+        "/data/adb/modules/riru",
+        "/data/adb/modules/Riru",
+        "/data/adb/riru",
+        "/data/misc/riru",
+        "/system/lib/libriruloader.so",
+        "/system/lib64/libriruloader.so",
+        nullptr
+    };
+    for (int i = 0; riru_paths[i]; i++) {
+        if (fexists(riru_paths[i])) {
+            add("riru_file", "Riru Framework File",
+                std::string("Riru artifact: ") + riru_paths[i]);
+            return;
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (!contains_ci(line, "riru") && !contains_ci(line, "riruloader")) continue;
+            size_t sp = line.rfind(' ');
+            std::string path = sp != std::string::npos ? line.substr(sp + 1) : line;
+            if (path.find("/system/") == 0) continue;
+            add("riru_maps", "Riru in Memory Maps", path.substr(0, 90));
+            return;
+        }
+    }
+}
+
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* env, jobject) {
     g_results.clear();
@@ -2147,6 +2291,10 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectKernelPatchModule();
     detectFridaFds();
     detectApatchExtra();
+    detectSOTERBypass();
+    detectXposedNative();
+    detectMapsFiltering();
+    detectRiruNative();
 
     jclass sc = env->FindClass("java/lang/String");
     jobjectArray r = env->NewObjectArray((jsize)g_results.size(), sc, nullptr);
