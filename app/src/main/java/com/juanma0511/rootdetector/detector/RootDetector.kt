@@ -112,7 +112,11 @@ class RootDetector(private val context: Context) {
             ::checkHiddenMagiskModules,
             ::checkHardcodedFrameworkSweep,
             ::checkTmpfsOnData,
-            ::checkSuTimestamps
+            ::checkSuTimestamps,
+            ::checkLdPreload,
+            ::checkSeccompMode,
+            ::checkTracerPid,
+            ::checkSUSFS
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -348,35 +352,54 @@ class RootDetector(private val context: Context) {
     private fun checkFrida(): List<DetectionItem> {
         val evidence = linkedSetOf<String>()
         fridaProcesses.forEach { name ->
-            if (isProcessRunning(name)) {
-                evidence += "process=$name"
-            }
+            if (isProcessRunning(name)) evidence += "process=$name"
         }
-        fridaPorts.forEach { port ->
+        val allFridaPorts = (fridaPorts + listOf(27043, 27044, 27047)).distinct()
+        allFridaPorts.forEach { port ->
             val open = try {
                 val socket = java.net.Socket()
                 socket.connect(java.net.InetSocketAddress("127.0.0.1", port), 150)
                 socket.close()
                 true
-            } catch (_: Exception) {
-                false
-            }
-            if (open) {
-                evidence += "port=$port"
-            }
+            } catch (_: Exception) { false }
+            if (open) evidence += "port=$port open"
         }
         try {
             File("/proc/self/maps").forEachLine { line ->
                 val lower = line.lowercase()
-                if (lower.contains("frida-agent") || lower.contains("frida-gadget")) {
+                if (lower.contains("frida-agent") || lower.contains("frida-gadget") ||
+                    lower.contains("gum-js") || lower.contains("frida-helper")) {
                     evidence += line.trim().take(120)
                 }
             }
         } catch (_: Exception) {}
-        evidence += collectNetUnixMatches(listOf("frida")).take(3)
+        evidence += collectNetUnixMatches(listOf("frida", "gadget")).take(3)
+        try {
+            File("/proc/self/fd").listFiles()?.forEach { fdEntry ->
+                runCatching {
+                    val target = java.nio.file.Files.readSymbolicLink(fdEntry.toPath()).toString()
+                    val lower = target.lowercase()
+                    if (lower.contains("frida") || lower.contains("gadget") || lower.contains("gum-js")) {
+                        evidence += "fd -> $target"
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            File("/proc/net/tcp").forEachLine { line ->
+                val fields = line.trim().split(Regex("\\s+"))
+                if (fields.size < 4 || fields[0] == "sl") return@forEachLine
+                val localAddr = fields[1]
+                val port = localAddr.substringAfter(":").toIntOrNull(16) ?: return@forEachLine
+                val state = fields[3]
+                if (port in listOf(27042, 27043, 27044, 27047) && state == "0A") {
+                    evidence += "/proc/net/tcp: port $port listening"
+                }
+            }
+        } catch (_: Exception) {}
         return listOf(det(
             "frida", "Frida Instrumentation", DetectionCategory.FRIDA, Severity.HIGH,
-            "Looks for Frida processes, loopback ports, unix sockets and injected maps entries",
+            "Checks Frida processes, loopback ports 27042-27047, unix sockets, injected maps, FDs and /proc/net/tcp",
             evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
         ))
     }
@@ -384,14 +407,35 @@ class RootDetector(private val context: Context) {
     private fun checkEmulator(): List<DetectionItem> {
         val indicators = mutableListOf<String>()
         val fp = Build.FINGERPRINT ?: ""
-        
-        if (fp.startsWith("generic") || fp.contains(":generic/")) indicators += "FINGERPRINT starts with generic"
-        if (Build.HARDWARE == "goldfish" || Build.HARDWARE == "ranchu") indicators += "HARDWARE=${Build.HARDWARE}"
-        if (Build.MANUFACTURER.equals("Genymotion", ignoreCase = true)) indicators += "MANUFACTURER=Genymotion"
-        if (Build.PRODUCT in emulatorProducts) indicators += "PRODUCT=${Build.PRODUCT}"
+        if (fp.startsWith("generic") || fp.contains(":generic/") || fp.contains("unknown/unknown"))
+            indicators += "FINGERPRINT=$fp"
+        if (Build.HARDWARE == "goldfish" || Build.HARDWARE == "ranchu")
+            indicators += "HARDWARE=${Build.HARDWARE}"
+        if (Build.MANUFACTURER.equals("Genymotion", ignoreCase = true))
+            indicators += "MANUFACTURER=Genymotion"
+        if (Build.PRODUCT in emulatorProducts)
+            indicators += "PRODUCT=${Build.PRODUCT}"
+        if (Build.BRAND.equals("generic", ignoreCase = true) || Build.BRAND.equals("Android", ignoreCase = true))
+            indicators += "BRAND=${Build.BRAND}"
+        if (Build.DEVICE.equals("generic", ignoreCase = true) || Build.DEVICE.startsWith("generic_"))
+            indicators += "DEVICE=${Build.DEVICE}"
+        if (Build.MODEL.contains("Android SDK built for", ignoreCase = true) ||
+            (Build.MODEL.contains("sdk", ignoreCase = true) && Build.MODEL.contains("emulator", ignoreCase = true)))
+            indicators += "MODEL=${Build.MODEL}"
+        if (Build.BOARD.isNullOrEmpty() || Build.BOARD == "unknown")
+            indicators += "BOARD=${Build.BOARD} (unknown board)"
+        val qemuProp = getProp("ro.kernel.qemu")
+        if (qemuProp == "1") indicators += "ro.kernel.qemu=1"
+        val bootQemuProp = getProp("ro.boot.qemu")
+        if (bootQemuProp == "1") indicators += "ro.boot.qemu=1"
+        val cpuAbi = Build.SUPPORTED_ABIS.firstOrNull().orEmpty()
+        if (cpuAbi.contains("x86") && Build.HARDWARE != null &&
+            !Build.HARDWARE.contains("x86", ignoreCase = true) &&
+            Build.BRAND.equals("generic", ignoreCase = true))
+            indicators += "CPU_ABI=$cpuAbi on generic-branded device"
         return listOf(det(
             "emulator", "Emulator / Virtual Device", DetectionCategory.EMULATOR, Severity.MEDIUM,
-            "Exact emulator hardware/product/fingerprint signatures",
+            "Checks fingerprint, hardware, brand, device, model, board, QEMU props and CPU ABI for emulator indicators",
             indicators.isNotEmpty(), indicators.joinToString("\n").ifEmpty { null }
         ))
     }
@@ -1919,6 +1963,122 @@ class RootDetector(private val context: Context) {
             "su_timestamps", "Recent Root Artifact Timestamps", DetectionCategory.MAGISK, Severity.HIGH,
             "Root artifacts modified within the last 30 days indicate active root installation",
             suspicious.isNotEmpty(), suspicious.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkLdPreload(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val ldPreload = System.getenv("LD_PRELOAD").orEmpty()
+        val ldLibPath = System.getenv("LD_LIBRARY_PATH").orEmpty()
+        val javaToolOpts = System.getenv("JAVA_TOOL_OPTIONS").orEmpty()
+        if (ldPreload.isNotEmpty()) {
+            val lower = ldPreload.lowercase()
+            if (frameworkKeywords().any { lower.contains(it) } ||
+                lower.contains("/data/") || lower.contains("frida") ||
+                lower.contains("inject") || lower.contains("hook"))
+                evidence += "LD_PRELOAD=$ldPreload"
+        }
+        if (ldLibPath.isNotEmpty()) {
+            val lower = ldLibPath.lowercase()
+            if (frameworkKeywords().any { lower.contains(it) } ||
+                lower.contains("/data/adb") || lower.contains("/debug_ramdisk"))
+                evidence += "LD_LIBRARY_PATH=$ldLibPath"
+        }
+        if (javaToolOpts.isNotEmpty()) evidence += "JAVA_TOOL_OPTIONS=$javaToolOpts"
+        try {
+            val environ = File("/proc/self/environ").readBytes()
+            environ.toString(Charsets.ISO_8859_1).split("\u0000").forEach { entry ->
+                val lower = entry.lowercase()
+                if ((entry.startsWith("LD_PRELOAD=") || entry.startsWith("LD_LIBRARY_PATH=")) &&
+                    entry.length > "LD_PRELOAD=".length &&
+                    (frameworkKeywords().any { lower.contains(it) } || lower.contains("/data/"))) {
+                    evidence += entry.take(120)
+                }
+            }
+        } catch (_: Exception) {}
+        return listOf(det(
+            "ld_preload", "LD_PRELOAD / Linker Injection",
+            DetectionCategory.MAGISK, Severity.HIGH,
+            "Detects injected native libraries via LD_PRELOAD, LD_LIBRARY_PATH or JAVA_TOOL_OPTIONS in the process environment",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSeccompMode(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        try {
+            val statusLine = File("/proc/self/status").useLines { lines ->
+                lines.firstOrNull { it.startsWith("Seccomp") }
+            } ?: return emptyList()
+            val mode = statusLine.substringAfter(":").trim().toIntOrNull() ?: return emptyList()
+            if (mode == 0) {
+                evidence += "Seccomp=$mode — syscall filter disabled (patched kernel or root bypass active)"
+            }
+        } catch (_: Exception) {}
+        return listOf(det(
+            "seccomp_mode", "Seccomp Filter Disabled",
+            DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
+            "Modern Android enforces Seccomp BPF (mode 2). Mode 0 indicates a patched or hook-bypassed kernel.",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkTracerPid(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        try {
+            val statusLine = File("/proc/self/status").useLines { lines ->
+                lines.firstOrNull { it.startsWith("TracerPid") }
+            } ?: return emptyList()
+            val pid = statusLine.substringAfter(":").trim().toIntOrNull() ?: return emptyList()
+            if (pid > 0) {
+                val comm = runCatching { File("/proc/$pid/comm").readText().trim() }.getOrDefault("unknown")
+                val cmdline = runCatching {
+                    File("/proc/$pid/cmdline").readText().replace('\u0000', ' ').trim().take(80)
+                }.getOrDefault("unknown")
+                evidence += "TracerPid=$pid comm=$comm cmdline=$cmdline"
+            }
+        } catch (_: Exception) {}
+        return listOf(det(
+            "tracer_pid", "Process Tracer (ptrace Attach)",
+            DetectionCategory.FRIDA, Severity.HIGH,
+            "TracerPid > 0 in /proc/self/status means the process is being traced by a debugger or Frida",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSUSFS(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val susfsNodes = listOf(
+            "/sys/module/susfs", "/sys/kernel/susfs",
+            "/proc/susfs", "/dev/susfs", "/sys/fs/susfs"
+        )
+        susfsNodes.filter { File(it).exists() }.forEach { evidence += "$it exists" }
+        try {
+            File("/proc/self/maps").forEachLine { line ->
+                if (line.contains("susfs", ignoreCase = true) ||
+                    line.contains("[sus_", ignoreCase = true) ||
+                    line.contains("ksu_susfs", ignoreCase = true)) {
+                    evidence += "maps: ${line.trim().take(100)}"
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            File("/proc/kallsyms").useLines { lines ->
+                lines.take(100_000).forEach { line ->
+                    if (line.contains("susfs", ignoreCase = true) ||
+                        line.contains("sus_path", ignoreCase = true) ||
+                        line.contains("ksu_susfs", ignoreCase = true)) {
+                        evidence += "kallsyms: ${line.trim().take(60)}"
+                        return@useLines
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return listOf(det(
+            "susfs", "SUSFS File Hide Module",
+            DetectionCategory.MAGISK, Severity.HIGH,
+            "Detects the SUSFS kernel module used to hide root files and processes from integrity checks",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
         ))
     }
 
