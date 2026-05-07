@@ -314,8 +314,10 @@ static void detectSulist() {
 
 static void detectRootDaemonCmdline() {
     const char* suspects[] = {
-        "magiskd", "ksud", "kernelsu", "apd", "zygisk",
+        "magiskd", "magisk", "ksud", "kernelsu", "apd", "zygisk",
         "lsposed", "lspd", "riru", "shamiko", "trickystore", "tricky_store",
+        "zygisk_next", "znext", "kpatch", "kpmd", "susfs",
+        "resetprop", "magiskpolicy", "busybox", "supersu",
         nullptr
     };
     std::vector<std::string> found;
@@ -360,6 +362,8 @@ static void detectRootUnixSockets() {
     const char* suspects[] = {
         "magisk", "zygisk", "ksud", "kernelsu", "apatch",
         "lsposed", "lspd", "riru", "shamiko", "trickystore", "tricky_store",
+        "zygisk_next", "znext", "kpatch", "kpatch_d", "susfs",
+        "lsplant", "frida", "gadget",
         nullptr
     };
     std::vector<std::string> found;
@@ -390,7 +394,6 @@ static void detectSuspiciousFiles() {
         "/dev/magisk_merge", "/dev/.magisk.unblock",
         "/data/adb/ksu", "/data/adb/ksud", "/dev/ksud", "/dev/ksu",
         "/sys/module/kernelsu", "/sys/kernel/ksu",
-        
         "/data/adb/modules/playintegrityfix",
         "/data/adb/modules/PlayIntegrityFix",
         "/data/adb/modules/tricky_store",
@@ -400,9 +403,24 @@ static void detectSuspiciousFiles() {
         "/data/adb/modules/shamiko",
         "/data/adb/modules/Shamiko",
         "/data/adb/modules/susfs",
+        "/data/adb/modules/SUSFS",
         "/data/adb/modules/safetynet-fix",
         "/data/adb/modules/HideMyApplist",
+        "/data/adb/modules/zygisk_next",
+        "/data/adb/modules/ZygiskNext",
+        "/data/adb/modules/lsplant",
+        "/data/adb/modules/ReZygisk",
+        "/data/adb/modules/rezygisk",
+        "/data/adb/modules/NativeDetach",
+        "/data/adb/modules/native_detach",
+        "/data/adb/modules/MagicMount",
+        "/data/adb/modules/magic_mount",
+        "/data/adb/ap", "/data/adb/ap/package_config",
+        "/data/adb/kpm",
+        "/dev/zygisk_next",
         "/system/app/Superuser.apk", "/system/xbin/daemonsu",
+        "/system/xbin/su", "/system/bin/su", "/vendor/bin/su",
+        "/sbin/su", "/su/bin/su",
         nullptr
     };
     std::vector<std::string> found;
@@ -1570,7 +1588,7 @@ static void detectKernelsuStatusFields() {
     size_t pos = status.find("CapEff:");
     if (pos != std::string::npos) {
         std::string cap_str = status.substr(pos + 7);
-        while (!cap_str.empty() && (cap_str[0] == ' ' || cap_str[0] == '	'))
+        while (!cap_str.empty() && (cap_str[0] == ' ' || cap_str[0] == '        '))
             cap_str = cap_str.substr(1);
         
         unsigned long long caps = 0;
@@ -1792,6 +1810,276 @@ static void detectSystemProxy() {
     }
 }
 
+static void detectSUSFS() {
+    if (fexists("/sys/module/susfs")) {
+        add("susfs_sysfs", "SUSFS Kernel Module",
+            "/sys/module/susfs exists — SUS filesystem file-hide bypass active");
+    }
+    const char* susfs_nodes[] = {
+        "/sys/kernel/susfs", "/proc/susfs", "/dev/susfs",
+        "/sys/fs/susfs", nullptr
+    };
+    for (int i = 0; susfs_nodes[i]; i++) {
+        if (fexists(susfs_nodes[i])) {
+            add("susfs_node", "SUSFS Kernel Node",
+                std::string("SUSFS proc/sys node present: ") + susfs_nodes[i]);
+            break;
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (line.find("susfs") != std::string::npos ||
+                line.find("[sus_") != std::string::npos ||
+                line.find("ksu_susfs") != std::string::npos) {
+                add("susfs_maps", "SUSFS in Memory Maps",
+                    "SUSFS mapping: " + line.substr(0, 80));
+                break;
+            }
+        }
+    }
+}
+
+static void detectLSPatch() {
+    const char* lspatch_paths[] = {
+        "/data/adb/lspatch",
+        "/data/adb/modules/lspatch",
+        nullptr
+    };
+    for (int i = 0; lspatch_paths[i]; i++) {
+        if (fexists(lspatch_paths[i])) {
+            add("lspatch_file", "LSPatch Detected",
+                std::string("LSPatch artifact: ") + lspatch_paths[i]);
+            return;
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (!contains_ci(line, "lspatch") && !contains_ci(line, "lspd_loader") &&
+                !contains_ci(line, "lsplant")) continue;
+            size_t sp = line.rfind(' ');
+            std::string path = sp != std::string::npos ? line.substr(sp + 1) : line;
+            if (path.find("/system/") == 0 || path.find("/apex/") == 0) continue;
+            add("lspatch_maps", "LSPatch in Memory Maps", path.substr(0, 90));
+            return;
+        }
+    }
+    DIR* fdir = opendir("/proc/self/fd");
+    if (fdir) {
+        struct dirent* fe;
+        while ((fe = readdir(fdir)) != nullptr) {
+            char link[256]{}, target[512]{};
+            snprintf(link, sizeof(link), "/proc/self/fd/%s", fe->d_name);
+            ssize_t len = readlink(link, target, sizeof(target) - 1);
+            if (len <= 0) continue;
+            target[len] = '\0';
+            if (contains_ci(target, "lspatch") || contains_ci(target, "lspd")) {
+                add("lspatch_fd", "LSPatch File Descriptor",
+                    std::string("LSPatch fd target: ") + target);
+                closedir(fdir);
+                return;
+            }
+        }
+        closedir(fdir);
+    }
+}
+
+static void detectSeccompDisabled() {
+    std::string status = fread_str("/proc/self/status");
+    size_t pos = status.find("Seccomp:");
+    if (pos != std::string::npos) {
+        std::string val = status.substr(pos + 8);
+        while (!val.empty() && (val[0] == ' ' || val[0] == '\t')) val = val.substr(1);
+        int mode = atoi(val.c_str());
+        if (mode == 0) {
+            add("seccomp_disabled", "Seccomp Filter Disabled",
+                "Seccomp=0 in /proc/self/status — kernel syscall filter bypassed (patched kernel or root)");
+        }
+    }
+}
+
+static void detectShamiko() {
+    const char* shamiko_paths[] = {
+        "/data/adb/modules/Shamiko",
+        "/data/adb/modules/shamiko",
+        "/data/adb/shamiko",
+        "/dev/shamiko",
+        nullptr
+    };
+    for (int i = 0; shamiko_paths[i]; i++) {
+        if (fexists(shamiko_paths[i])) {
+            add("shamiko_file", "Shamiko Module Detected",
+                std::string("Shamiko path: ") + shamiko_paths[i]);
+            return;
+        }
+    }
+    std::ifstream unix_file("/proc/net/unix");
+    if (unix_file) {
+        std::string line;
+        while (std::getline(unix_file, line)) {
+            if (contains_ci(line, "shamiko")) {
+                size_t sp = line.rfind(' ');
+                std::string name = sp != std::string::npos ? line.substr(sp + 1) : line;
+                add("shamiko_socket", "Shamiko Unix Socket",
+                    "Shamiko socket: " + name.substr(0, 80));
+                return;
+            }
+        }
+    }
+    std::ifstream maps("/proc/self/maps");
+    if (maps) {
+        std::string line;
+        while (std::getline(maps, line)) {
+            if (!contains_ci(line, "shamiko") && !contains_ci(line, "libshamiko")) continue;
+            size_t sp = line.rfind(' ');
+            std::string path = sp != std::string::npos ? line.substr(sp + 1) : line;
+            if (path.find("/system/") == 0) continue;
+            add("shamiko_maps", "Shamiko in Memory Maps", path.substr(0, 80));
+            return;
+        }
+    }
+}
+
+static void detectZygiskNext() {
+    const char* zn_paths[] = {
+        "/data/adb/modules/zygisk_next",
+        "/data/adb/modules/ZygiskNext",
+        "/dev/zygisk_next",
+        nullptr
+    };
+    for (int i = 0; zn_paths[i]; i++) {
+        if (fexists(zn_paths[i])) {
+            add("zygisk_next", "ZygiskNext Module",
+                std::string("ZygiskNext path: ") + zn_paths[i]);
+            return;
+        }
+    }
+    const char* zn_sockets[] = {"zygisk_next", "znext", nullptr};
+    for (int i = 0; zn_sockets[i]; i++) {
+        int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        if (sock < 0) continue;
+        struct sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        size_t nlen = strlen(zn_sockets[i]);
+        memcpy(addr.sun_path + 1, zn_sockets[i], nlen);
+        socklen_t slen = offsetof(struct sockaddr_un, sun_path) + 1 + nlen;
+        struct timeval tv{0, 80000};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        int r = connect(sock, (struct sockaddr*)&addr, slen);
+        close(sock);
+        if (r == 0) {
+            add("zygisk_next_sock", "ZygiskNext Socket",
+                std::string("Connected to abstract socket @") + zn_sockets[i]);
+            return;
+        }
+    }
+}
+
+static void detectKernelPatchModule() {
+    const char* kpm_paths[] = {
+        "/data/adb/kpm",
+        "/data/adb/ap/kpm",
+        "/sys/kernel/kpm",
+        "/sys/module/kpatch",
+        "/dev/kpatch",
+        nullptr
+    };
+    for (int i = 0; kpm_paths[i]; i++) {
+        if (fexists(kpm_paths[i])) {
+            add("kpm_detected", "KernelPatch Module (KPM)",
+                std::string("KPM artifact: ") + kpm_paths[i]);
+            return;
+        }
+    }
+    const struct { int opt; long arg2; const char* name; } kpatch_probes[] = {
+        { 0x114514, 0,          "prctl(0x114514,0)"            },
+        { 0,        0,          nullptr                         }
+    };
+    for (int i = 0; kpatch_probes[i].name; i++) {
+        errno = 0;
+        prctl(kpatch_probes[i].opt, kpatch_probes[i].arg2, 0, 0, 0);
+        if (errno != EINVAL && errno != EPERM && errno != ENOSYS) {
+            add("kpatch_prctl", "KernelPatch prctl Hook",
+                std::string(kpatch_probes[i].name) +
+                " errno=" + std::to_string(errno) + " — APatch/KPM kernel hook");
+            return;
+        }
+    }
+}
+
+static void detectFridaFds() {
+    DIR* fdir = opendir("/proc/self/fd");
+    if (!fdir) return;
+    struct dirent* fe;
+    std::vector<std::string> found;
+    while ((fe = readdir(fdir)) != nullptr) {
+        char link[256]{}, target[512]{};
+        snprintf(link, sizeof(link), "/proc/self/fd/%s", fe->d_name);
+        ssize_t len = readlink(link, target, sizeof(target) - 1);
+        if (len <= 0) continue;
+        target[len] = '\0';
+        std::string t = target;
+        for (auto& c : t) c = tolower(c);
+        if (t.find("frida") != std::string::npos ||
+            t.find("gadget") != std::string::npos ||
+            t.find("gum-js") != std::string::npos) {
+            found.push_back(target);
+        }
+    }
+    closedir(fdir);
+    if (!found.empty()) {
+        std::string d = "Frida file descriptors:";
+        for (size_t i = 0; i < found.size() && i < 3; i++) d += " [" + found[i] + "]";
+        add("frida_fds", "Frida File Descriptors", d);
+    }
+}
+
+static void detectApatchExtra() {
+    char val[256]{};
+    if (__system_property_get("ro.apatch.version", val) > 0 && strlen(val) > 0) {
+        add("apatch_prop_extra", "APatch System Property",
+            std::string("ro.apatch.version=") + val);
+    }
+    memset(val, 0, sizeof(val));
+    if (__system_property_get("ro.apatch.build", val) > 0 && strlen(val) > 0) {
+        add("apatch_build_prop", "APatch Build Property",
+            std::string("ro.apatch.build=") + val);
+    }
+    const char* apatch_extra[] = {
+        "/data/adb/ap/package_config",
+        "/data/adb/ap/root_list",
+        "/data/adb/ap/super_key",
+        "/dev/apatch_control",
+        "/sys/module/apatch",
+        nullptr
+    };
+    for (int i = 0; apatch_extra[i]; i++) {
+        if (fexists(apatch_extra[i])) {
+            add("apatch_extra", "APatch Extra Artifact",
+                std::string("APatch path: ") + apatch_extra[i]);
+            break;
+        }
+    }
+    int sock = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    if (sock >= 0) {
+        const char* apatch_sock = "apatch_daemon";
+        struct sockaddr_un addr{};
+        addr.sun_family = AF_UNIX;
+        size_t nlen = strlen(apatch_sock);
+        memcpy(addr.sun_path + 1, apatch_sock, nlen);
+        socklen_t slen = offsetof(struct sockaddr_un, sun_path) + 1 + nlen;
+        struct timeval tv{0, 80000};
+        setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        if (connect(sock, (struct sockaddr*)&addr, slen) == 0)
+            add("apatch_socket", "APatch Daemon Socket",
+                "Connected to APatch abstract socket @apatch_daemon");
+        close(sock);
+    }
+}
+
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* env, jobject) {
     g_results.clear();
@@ -1851,6 +2139,14 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectUserCACerts();
     detectProxyPorts();
     detectSystemProxy();
+    detectSUSFS();
+    detectLSPatch();
+    detectSeccompDisabled();
+    detectShamiko();
+    detectZygiskNext();
+    detectKernelPatchModule();
+    detectFridaFds();
+    detectApatchExtra();
 
     jclass sc = env->FindClass("java/lang/String");
     jobjectArray r = env->NewObjectArray((jsize)g_results.size(), sc, nullptr);
