@@ -121,7 +121,12 @@ class RootDetector(private val context: Context) {
             ::checkSOTER,
             ::checkXposedFramework,
             ::checkADBNetwork,
-            ::checkDeveloperOptions
+            ::checkDeveloperOptions,
+            ::checkSuDirectory,
+            ::checkExternalStorageArtifacts,
+            ::checkRecoveryArtifacts,
+            ::checkInitDotD,
+            ::checkDataLocalTmp
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -1152,41 +1157,100 @@ class RootDetector(private val context: Context) {
         )
     }
 
+    private fun collectSystemBuildDates(): LinkedHashMap<String, Date> {
+        val out = linkedMapOf<String, Date>()
+        val buildTimeMs = Build.TIME
+        if (buildTimeMs > 0L) out["system_build_time"] = Date(buildTimeMs)
+        val utcRaw = getProp("ro.build.date.utc")
+        utcRaw.toLongOrNull()?.let { secs ->
+            if (secs > 0L) out["ro.build.date.utc"] = Date(secs * 1000L)
+        }
+        val vendorUtc = getProp("ro.vendor.build.date.utc")
+        vendorUtc.toLongOrNull()?.let { secs ->
+            if (secs > 0L) out["ro.vendor.build.date.utc"] = Date(secs * 1000L)
+        }
+        return out
+    }
+
     private fun checkKernelPatchWindow(): List<DetectionItem> {
         val kernelDate = parseKernelBuildDate()
         val patchDates = collectPatchDates()
-        if (kernelDate == null || patchDates.isEmpty()) {
+        val systemDates = collectSystemBuildDates()
+        val allReferences = linkedMapOf<String, Date>().apply {
+            putAll(systemDates)
+            putAll(patchDates)
+        }
+
+        if (kernelDate == null || allReferences.isEmpty()) {
             return listOf(det(
                 "kernel_patch_window",
                 "Kernel / Patch Window",
                 DetectionCategory.SYSTEM_PROPS,
                 Severity.MEDIUM,
-                "Checks whether kernel build time stays reasonably close to system and security patch dates",
-                false,
-                null
+                "Checks whether kernel build date is consistent with system build and security patch dates",
+                false, null
             ))
         }
-        val thresholdDays = if (bootLooksLockedAndNormal()) 60L else 30L
-        val closest = patchDates.minByOrNull { diffDays(kernelDate, it.value) } ?: return emptyList()
-        val newest = patchDates.maxByOrNull { it.value.time } ?: return emptyList()
-        val closestDiff = diffDays(kernelDate, closest.value)
-        val newestDiff = diffDays(kernelDate, newest.value)
-        val suspicious = linkedSetOf<String>()
-        if (closestDiff > thresholdDays && newestDiff > thresholdDays) {
-            suspicious += "kernel_build=${formatDate(kernelDate)}"
-            suspicious += "closest_patch=${closest.key}:${formatDate(closest.value)} (${closestDiff}d)"
-            suspicious += "newest_patch=${newest.key}:${formatDate(newest.value)} (${newestDiff}d)"
-            suspicious += "threshold=${thresholdDays}d"
+
+        val results = mutableListOf<DetectionItem>()
+
+        val newerEvidence = linkedSetOf<String>()
+        val newestRef = allReferences.maxByOrNull { it.value.time }!!
+        if (kernelDate.after(newestRef.value)) {
+            val deltaMs = kernelDate.time - newestRef.value.time
+            val deltaDays = deltaMs / 86_400_000L
+            newerEvidence += "kernel_build=${formatDate(kernelDate)}"
+            newerEvidence += "newest_reference=${newestRef.key}:${formatDate(newestRef.value)}"
+            newerEvidence += "kernel_is_${deltaDays}d_newer_than_system"
+            newerEvidence += "indicates_aftermarket_kernel_flashed_post_OEM"
+            systemDates.forEach { (k, v) ->
+                if (kernelDate.after(v)) {
+                    val d = (kernelDate.time - v.time) / 86_400_000L
+                    newerEvidence += "$k=${formatDate(v)} (kernel +${d}d)"
+                }
+            }
+            patchDates.forEach { (k, v) ->
+                if (kernelDate.after(v)) {
+                    val d = (kernelDate.time - v.time) / 86_400_000L
+                    newerEvidence += "$k=${formatDate(v)} (kernel +${d}d)"
+                }
+            }
         }
-        return listOf(det(
+        results += det(
+            "kernel_newer_than_system",
+            "Kernel Newer Than System / Security Patch",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.HIGH,
+            "Kernel build date is more recent than the system image and security patch — strong indicator of an aftermarket custom kernel flashed independently of the OEM update",
+            newerEvidence.isNotEmpty(),
+            newerEvidence.joinToString("\n").ifEmpty { null }
+        )
+
+        val thresholdDays = if (bootLooksLockedAndNormal()) 60L else 30L
+        val closest = patchDates.minByOrNull { diffDays(kernelDate, it.value) }
+        val newest = patchDates.maxByOrNull { it.value.time }
+        val staleness = linkedSetOf<String>()
+        if (closest != null && newest != null) {
+            val closestDiff = diffDays(kernelDate, closest.value)
+            val newestDiff = diffDays(kernelDate, newest.value)
+            if (closestDiff > thresholdDays && newestDiff > thresholdDays && !kernelDate.after(newest.value)) {
+                staleness += "kernel_build=${formatDate(kernelDate)}"
+                staleness += "closest_patch=${closest.key}:${formatDate(closest.value)} (${closestDiff}d apart)"
+                staleness += "newest_patch=${newest.key}:${formatDate(newest.value)} (${newestDiff}d apart)"
+                staleness += "threshold=${thresholdDays}d"
+            }
+        }
+        results += det(
             "kernel_patch_window",
-            "Kernel / Patch Window",
+            "Kernel / Patch Window Mismatch",
             DetectionCategory.SYSTEM_PROPS,
             Severity.MEDIUM,
-            "Checks whether kernel build time stays reasonably close to system and security patch dates",
-            suspicious.isNotEmpty(),
-            suspicious.joinToString("\n").ifEmpty { null }
-        ))
+            "Kernel build date is unusually far from all security patch dates — indicates a mismatched kernel from a different build cycle",
+            staleness.isNotEmpty(),
+            staleness.joinToString("\n").ifEmpty { null }
+        )
+
+        return results
     }
 
         private fun checkSpoofedProps(): List<DetectionItem> {
@@ -2213,6 +2277,143 @@ class RootDetector(private val context: Context) {
             "developer_options", "Developer Options / USB Debugging",
             DetectionCategory.SYSTEM_PROPS, Severity.MEDIUM,
             "Developer mode, ADB access and OEM unlock are prerequisites for rooting and runtime tampering",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSuDirectory(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val suDirs = listOf(
+            "/su", "/su/bin", "/su/lib", "/su/xbin", "/su/etc",
+            "/su/etc/init.d", "/su/su.d", "/su/0", "/su/1000",
+            "/system/su.d", "/system/etc/init.d", "/data/adb/su"
+        )
+        suDirs.forEach { path ->
+            val f = File(path)
+            if (f.exists() && f.isDirectory) {
+                evidence += "dir: $path"
+            } else {
+                try {
+                    f.listFiles()
+                } catch (_: SecurityException) {
+                    evidence += "dir: $path (access denied — exists)"
+                }
+            }
+        }
+        listOf(
+            "ro.su.granted_count", "ro.su.secured_by",
+            "ro.su.active_count", "ro.su.request_timeout"
+        ).forEach { prop ->
+            val v = getProp(prop)
+            if (v.isNotEmpty()) evidence += "$prop=$v"
+        }
+        return listOf(det(
+            "su_directory", "SU Directory Structure",
+            DetectionCategory.SU_BINARIES, Severity.HIGH,
+            "Checks the /su directory hierarchy created by SuperSU and legacy root methods, and reads SuperSU system props",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkExternalStorageArtifacts(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val paths = listOf(
+            "/sdcard/TWRP", "/sdcard/twrp",
+            "/sdcard/SuperSU", "/sdcard/supersu",
+            "/sdcard/Magisk", "/sdcard/.Magisk",
+            "/sdcard/Download/Magisk.apk", "/sdcard/Download/magisk.apk",
+            "/sdcard/Download/Magisk.zip",
+            "/sdcard/Download/KernelSU.apk", "/sdcard/Download/kernelsu.apk",
+            "/sdcard/Download/APatch.apk",
+            "/sdcard/TWRP/TWRP.app",
+            "/external_sd/TWRP",
+            "/storage/emulated/0/TWRP",
+            "/storage/emulated/0/SuperSU",
+            "/storage/emulated/0/.Magisk"
+        )
+        paths.forEach { path ->
+            if (File(path).exists()) evidence += path
+        }
+        return listOf(det(
+            "sdcard_artifacts", "Root Tool Artifacts on External Storage",
+            DetectionCategory.MAGISK, Severity.MEDIUM,
+            "TWRP, SuperSU, Magisk, KernelSU and APatch files on external storage — common residues of sideloaded root",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkRecoveryArtifacts(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val paths = listOf(
+            "/cache/recovery", "/cache/recovery/last_install",
+            "/cache/recovery/last_log", "/cache/recovery/command",
+            "/cache/magisk.log", "/cache/magisk_install_log",
+            "/tmp/recovery.log", "/tmp/magisk.log",
+            "/data/recovery", "/data/system/recovery"
+        )
+        paths.forEach { path ->
+            if (File(path).exists()) evidence += path
+        }
+        return listOf(det(
+            "recovery_artifacts", "Custom Recovery Artifacts",
+            DetectionCategory.MAGISK, Severity.MEDIUM,
+            "Leftover files from TWRP, OrangeFox and other custom recoveries used for flashing root",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkInitDotD(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val initDirs = listOf(
+            "/etc/init.d", "/system/etc/init.d",
+            "/system/su.d", "/su/su.d", "/su/etc/init.d"
+        )
+        initDirs.forEach { dir ->
+            val f = File(dir)
+            if (f.exists() && f.isDirectory) {
+                evidence += "dir exists: $dir"
+                runCatching {
+                    f.listFiles()?.take(5)?.forEach { child ->
+                        evidence += "  script: ${child.name}"
+                    }
+                }
+            }
+        }
+        return listOf(det(
+            "init_dotd", "init.d / su.d Boot Scripts",
+            DetectionCategory.MAGISK, Severity.MEDIUM,
+            "/etc/init.d and /system/su.d directories are used by SuperSU and custom root setups to persist scripts across reboots",
+            evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkDataLocalTmp(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+        val tmpDirs = listOf("/data/local/tmp", "/data/local/bin")
+        val suspiciousNames = listOf(
+            "su", "magisk", "frida", "gdb", "strace",
+            "busybox", "ksud", "apd", "resetprop"
+        )
+        tmpDirs.forEach { dir ->
+            val f = File(dir)
+            runCatching {
+                val st = java.nio.file.Files.getPosixFilePermissions(f.toPath())
+                if (st.size == 9) evidence += "$dir is world-writable (777)"
+            }
+            runCatching {
+                f.listFiles()?.forEach { child ->
+                    val name = child.name.lowercase()
+                    if (suspiciousNames.any { name.contains(it) })
+                        evidence += "suspicious file: ${child.absolutePath}"
+                    if (child.canExecute())
+                        evidence += "executable in tmp: ${child.absolutePath}"
+                }
+            }
+        }
+        return listOf(det(
+            "data_local_tmp", "Suspicious Files in /data/local/tmp",
+            DetectionCategory.SU_BINARIES, Severity.HIGH,
+            "Executable or root-named files in world-writable temp dirs — common staging ground for root tools and exploits",
             evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
         ))
     }

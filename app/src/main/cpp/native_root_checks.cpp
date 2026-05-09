@@ -260,20 +260,145 @@ static void detectPtrace() {
 }
 
 static void detectSuBinary() {
-    const char* bins[] = {"su","busybox","magisk","ksud","resetprop","apd",nullptr};
-    const char* dirs[] = {"/sbin","/system/bin","/system/xbin","/data/local/bin",
-                          "/data/local/xbin","/su/bin","/vendor/bin",nullptr};
+    const char* bins[] = {
+        "su", "su.bak", ".su", "su0", "daemonsu", "sush",
+        "busybox", "magisk", "ksud", "resetprop", "apd", "supersu",
+        nullptr
+    };
+    const char* dirs[] = {
+        "/sbin", "/system/bin", "/system/xbin",
+        "/system/usr/we-need-root",
+        "/data/local/bin", "/data/local/xbin", "/data/local/tmp",
+        "/su/bin", "/su/xbin",
+        "/vendor/bin", "/cache", "/tmp",
+        "/apex/com.android.runtime/bin",
+        nullptr
+    };
     std::vector<std::string> found;
-    for (int i = 0; dirs[i]; i++)
+    std::vector<std::string> setuid_found;
+    for (int i = 0; dirs[i]; i++) {
         for (int j = 0; bins[j]; j++) {
-            char p[256];
+            char p[512];
             snprintf(p, sizeof(p), "%s/%s", dirs[i], bins[j]);
-            if (fexists(p)) found.push_back(p);
+            struct stat st{};
+            if (stat(p, &st) == 0) {
+                found.push_back(p);
+                if (st.st_mode & S_ISUID)
+                    setuid_found.push_back(p);
+            } else if (errno == EACCES) {
+                found.push_back(std::string(p) + "(noperm)");
+            }
         }
+    }
     if (!found.empty()) {
         std::string d = "Root binaries:";
         for (auto& p : found) d += " " + p;
         add("su_binary", "Root Binaries (native)", d);
+    }
+    if (!setuid_found.empty()) {
+        std::string d = "Setuid root binaries:";
+        for (auto& p : setuid_found) d += " " + p;
+        add("su_setuid", "Setuid Root Binary", d);
+    }
+}
+
+static void detectSuDirectory() {
+    const char* su_dirs[] = {
+        "/su", "/su/bin", "/su/lib", "/su/xbin", "/su/etc",
+        "/su/etc/init.d", "/su/su.d", "/su/0", "/su/1000",
+        "/system/su.d", "/system/etc/init.d",
+        "/data/adb/su",
+        nullptr
+    };
+    std::vector<std::string> found;
+    for (int i = 0; su_dirs[i]; i++) {
+        struct stat st{};
+        if (stat(su_dirs[i], &st) == 0 && S_ISDIR(st.st_mode))
+            found.push_back(su_dirs[i]);
+        else if (errno == EACCES)
+            found.push_back(std::string(su_dirs[i]) + "(noperm)");
+    }
+    char val[92]{};
+    const char* su_props[] = {
+        "ro.su.granted_count", "ro.su.secured_by",
+        "ro.su.active_count", "ro.su.request_timeout",
+        nullptr
+    };
+    for (int i = 0; su_props[i]; i++) {
+        if (__system_property_get(su_props[i], val) > 0)
+            found.push_back(std::string(su_props[i]) + "=" + val);
+    }
+    if (!found.empty()) {
+        std::string d;
+        for (auto& p : found) d += p + " ";
+        add("su_dir", "SU Directory Structure", d);
+    }
+}
+
+static void detectDataLocalArtifacts() {
+    const char* tmp_dirs[] = {
+        "/data/local/tmp", "/data/local/bin", "/tmp", "/cache", nullptr
+    };
+    const char* suspicious[] = {
+        "su", "magisk", "frida", "gdb", "strace", "ltrace",
+        "busybox", "ksud", "apd", "resetprop", nullptr
+    };
+    std::vector<std::string> found;
+    for (int i = 0; tmp_dirs[i]; i++) {
+        struct stat dirst{};
+        if (stat(tmp_dirs[i], &dirst) == 0) {
+            if ((dirst.st_mode & 0777) == 0777)
+                found.push_back(std::string(tmp_dirs[i]) + " is world-writable(777)");
+        }
+        for (int j = 0; suspicious[j]; j++) {
+            char p[512];
+            snprintf(p, sizeof(p), "%s/%s", tmp_dirs[i], suspicious[j]);
+            if (fexists_or_noperm(p)) found.push_back(p);
+        }
+    }
+    if (!found.empty()) {
+        std::string d;
+        for (auto& p : found) d += p + " ";
+        add("data_local_artifacts", "Root Artifacts in Temp Dirs", d);
+    }
+}
+
+static void detectSetuidBits() {
+    const char* scan_dirs[] = {
+        "/system/bin", "/system/xbin", "/vendor/bin",
+        "/sbin", "/data/local/tmp", "/data/local/bin",
+        nullptr
+    };
+    const char* expected[] = {
+        "run-as", "simpleperf", "perfprofd", nullptr
+    };
+    std::vector<std::string> found;
+    for (int i = 0; scan_dirs[i]; i++) {
+        DIR* dp = opendir(scan_dirs[i]);
+        if (!dp) continue;
+        struct dirent* e;
+        int count = 0;
+        while ((e = readdir(dp)) != nullptr && count < 300) {
+            if (e->d_name[0] == '.') continue;
+            char p[512];
+            snprintf(p, sizeof(p), "%s/%s", scan_dirs[i], e->d_name);
+            struct stat st{};
+            if (stat(p, &st) != 0 || !(st.st_mode & S_ISUID)) { count++; continue; }
+            bool known = false;
+            for (int j = 0; expected[j]; j++) {
+                if (strncmp(e->d_name, expected[j], strlen(expected[j])) == 0) {
+                    known = true; break;
+                }
+            }
+            if (!known) found.push_back(std::string(p) + "(setuid)");
+            count++;
+        }
+        closedir(dp);
+    }
+    if (!found.empty()) {
+        std::string d = "Unexpected setuid binaries:";
+        for (auto& p : found) d += " " + p;
+        add("setuid_bits", "Unexpected Setuid Binaries", d);
     }
 }
 
@@ -529,16 +654,57 @@ static void detectThirdPartyRom() {
     }
 }
 
+static time_t parse_kernel_build_time(const std::string& procver) {
+    static const char* days[] = {"Mon","Tue","Wed","Thu","Fri","Sat","Sun",nullptr};
+    size_t date_pos = std::string::npos;
+    for (int d = 0; days[d]; d++) {
+        size_t p = procver.find(days[d]);
+        if (p != std::string::npos) { date_pos = p; break; }
+    }
+    if (date_pos == std::string::npos) return 0;
+    std::string ds = procver.substr(date_pos);
+    static const char* fmts[] = {
+        "%a %b %d %H:%M:%S %Z %Y",
+        "%a %b  %d %H:%M:%S %Z %Y",
+        nullptr
+    };
+    for (int fi = 0; fmts[fi]; fi++) {
+        struct tm kt{};
+        char* end = strptime(ds.c_str(), fmts[fi], &kt);
+        if (end && end != ds.c_str()) {
+            kt.tm_isdst = -1;
+            time_t t = timegm(&kt);
+            if (t > 0) return t;
+        }
+    }
+    return 0;
+}
+
+static std::string fmt_epoch(time_t t) {
+    struct tm tm{};
+    gmtime_r(&t, &tm);
+    char buf[20]{};
+    strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
+    return buf;
+}
+
 static void detectKernelBuild() {
     struct utsname uts{};
     if (uname(&uts) != 0) return;
     std::string rel = uts.release, ver = uts.version;
+
     if (contains_ci(rel, "ksu") || contains_ci(rel, "kernelsu") ||
         contains_ci(rel, "ksunext") || contains_ci(rel, "sukisu"))
         add("kernel_ksu_str", "KernelSU in Kernel Build", "uname release: " + rel);
 
-    const char* custom_kernels[] = {"arter97","sultan","blu_spark","elementsX",
-        "Franco","NetHunter","kali",nullptr};
+    const char* custom_kernels[] = {
+        "arter97","sultan","blu_spark","elementsX","Franco","NetHunter","kali",
+        "PrimeKernel","openela","PixelKernel","greenforce","cosmic","dragonheart",
+        "proton","stormbreaker","sleepy","syberia","crDroid","hentai","octavi",
+        "purekernel","exynos-hacks","UKM","ZeroVoid","CruelKernel","Waifu",
+        "ShadesOfPurple","Kirisakura","Optimus","RedHat","Floral","Vantom",
+        "Los","lineageos","aospk","corvus","pixel-emu","waydroid",nullptr
+    };
     for (int i = 0; custom_kernels[i]; i++) {
         if (contains_ci(rel, custom_kernels[i]) || contains_ci(ver, custom_kernels[i])) {
             add("custom_kernel", "Custom Kernel Detected",
@@ -549,12 +715,55 @@ static void detectKernelBuild() {
 
     std::string procver = fread_str("/proc/version");
     if (!procver.empty()) {
-        const char* custom_hosts[] = {"archlinux","kali","popos","lineage","crdroid",nullptr};
+        const char* custom_hosts[] = {
+            "archlinux","kali","popos","lineage","crdroid",
+            "ubuntu","debian","fedora","gentoo","nixos","buildkite",nullptr
+        };
         for (int i = 0; custom_hosts[i]; i++) {
             if (contains_ci(procver, custom_hosts[i])) {
                 add("custom_kernel_host", "Custom Kernel Build Host",
-                    "Build host: " + procver.substr(0, 80));
+                    "Build host: " + procver.substr(0, 100));
                 break;
+            }
+        }
+
+        time_t kernel_time = parse_kernel_build_time(procver);
+        if (kernel_time > 0) {
+            char sys_utc_buf[32]{};
+            time_t sys_build_time = 0;
+            if (__system_property_get("ro.build.date.utc", sys_utc_buf) > 0)
+                sys_build_time = (time_t)strtoll(sys_utc_buf, nullptr, 10);
+
+            char sec_patch_buf[32]{};
+            time_t sec_patch_time = 0;
+            if (__system_property_get("ro.build.version.security_patch", sec_patch_buf) > 0) {
+                struct tm spt{};
+                if (strptime(sec_patch_buf, "%Y-%m-%d", &spt)) {
+                    spt.tm_isdst = -1;
+                    sec_patch_time = timegm(&spt);
+                }
+            }
+
+            std::string kdate = fmt_epoch(kernel_time);
+
+            if (sys_build_time > 0 && kernel_time > sys_build_time + 86400L) {
+                long delta = (long)((kernel_time - sys_build_time) / 86400);
+                add("kernel_newer_than_system",
+                    "Kernel Newer Than System Build",
+                    "kernel_build=" + kdate +
+                    " system_build=" + fmt_epoch(sys_build_time) +
+                    " delta=" + std::to_string(delta) + "d"
+                    " — aftermarket kernel flashed after OEM image");
+            }
+
+            if (sec_patch_time > 0 && kernel_time > sec_patch_time + 86400L) {
+                long delta = (long)((kernel_time - sec_patch_time) / 86400);
+                add("kernel_newer_than_patch",
+                    "Kernel Newer Than Security Patch",
+                    "kernel_build=" + kdate +
+                    " security_patch=" + std::string(sec_patch_buf) +
+                    " delta=" + std::to_string(delta) + "d"
+                    " — custom kernel compiled after last OEM patch cycle");
             }
         }
     }
@@ -2235,7 +2444,7 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectKernelsuNextVariants();
     detectKernelsuNextMaps();
     detectKernelsuKallsyms();
-    detectPrimeKernel();
+    
     detectKernelsuUidAnomaly();
     detectKernelsuStatusFields();
     detectKernelsuNetUnix();
@@ -2243,6 +2452,9 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectZygisk();
     detectPtrace();
     detectSuBinary();
+    detectSuDirectory();
+    detectDataLocalArtifacts();
+    detectSetuidBits();
     detectSulist();
     detectRootDaemonCmdline();
     detectRootUnixSockets();
