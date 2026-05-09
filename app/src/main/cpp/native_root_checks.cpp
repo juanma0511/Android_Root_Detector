@@ -15,6 +15,7 @@
 #include <sys/ptrace.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
+#include <sys/system_properties.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -858,59 +859,99 @@ static void detectMountAnomalies() {
 }
 
 static void detectResetprop() {
+    std::vector<std::string> evidence;
+
     const char* rp_paths[] = {
         "/sbin/resetprop", "/system/bin/resetprop", "/system/xbin/resetprop",
-        "/data/adb/resetprop", "/data/local/tmp/resetprop", nullptr
+        "/data/adb/resetprop", "/data/adb/magisk/resetprop",
+        "/data/local/tmp/resetprop", "/data/local/tmp/resetprop_replace",
+        nullptr
     };
     for (int i = 0; rp_paths[i]; i++) {
-        if (fexists_or_noperm(rp_paths[i])) {
-            add("resetprop", "resetprop Binary Found",
-                std::string("Magisk resetprop at: ") + rp_paths[i]);
-            return;
-        }
+        if (fexists_or_noperm(rp_paths[i]))
+            evidence.push_back(std::string("binary: ") + rp_paths[i]);
     }
-    struct PropCheck { const char* key; const char* file; } checks[] = {
-        {"ro.build.tags", "/system/build.prop"},
-        {"ro.build.tags", "/system/system/build.prop"},
-        {"ro.build.fingerprint", "/system/build.prop"},
-        {"ro.build.fingerprint", "/system/system/build.prop"},
-        {"ro.vendor.build.fingerprint", "/vendor/build.prop"},
-        {"ro.product.build.fingerprint", "/product/build.prop"},
-        {"ro.product.device", "/system/build.prop"},
-        {"ro.product.device", "/product/build.prop"},
-        {"ro.debuggable", "/system/build.prop"},
-        {"ro.secure", "/system/build.prop"},
-        {"ro.build.type", "/system/build.prop"},
-        {"ro.build.type", "/system/system/build.prop"},
-        {"ro.boot.vbmeta.device_state", "/default.prop"},
-        {"ro.boot.flash.locked", "/default.prop"},
-        {"ro.boot.verifiedbootstate", "/default.prop"},
-        {"ro.boot.vbmeta.device_state", "/vendor/default.prop"},
-        {"ro.boot.flash.locked", "/vendor/default.prop"},
-        {"ro.boot.verifiedbootstate", "/vendor/default.prop"},
-        {nullptr, nullptr}
+
+    const char* prop_files[] = {
+        "/system/build.prop", "/system/system/build.prop",
+        "/vendor/build.prop", "/product/build.prop",
+        "/odm/build.prop", "/system_ext/build.prop",
+        "/my_product/build.prop", "/my_company/build.prop",
+        "/vendor/default.prop", "/default.prop",
+        nullptr
     };
-    std::vector<std::string> mismatches;
-    for (int i = 0; checks[i].key; i++) {
-        char live[256]{};
-        if (__system_property_get(checks[i].key, live) <= 0) continue;
-        std::string file_val = prop_from_file(checks[i].file, checks[i].key);
-        if (!file_val.empty() && file_val.back() == '\n') file_val.pop_back();
-        if (!file_val.empty() && strcmp(live, file_val.c_str()) != 0) {
-            mismatches.push_back(std::string(checks[i].key) + " system=['" + live + "'] file=['" + file_val + "']");
+
+    std::map<std::string, std::string> file_props;
+    for (int fi = 0; prop_files[fi]; fi++) {
+        std::ifstream f(prop_files[fi]);
+        if (!f) continue;
+        std::string line;
+        while (std::getline(f, line)) {
+            if (line.empty() || line[0] == '#' || line[0] == ' ') continue;
+            size_t eq = line.find('=');
+            if (eq == std::string::npos || eq == 0) continue;
+            std::string key = line.substr(0, eq);
+            std::string val = line.substr(eq + 1);
+            if (!val.empty() && val.back() == '\r') val.pop_back();
+            if (key.compare(0, 3, "ro.") == 0 && file_props.find(key) == file_props.end())
+                file_props[key] = val;
         }
     }
-    char serial_live[256]{};
-    char serial_boot[256]{};
+
+    for (auto& kv : file_props) {
+        char live[256]{};
+        if (__system_property_get(kv.first.c_str(), live) <= 0) continue;
+        std::string live_str = live;
+        if (live_str != kv.second)
+            evidence.push_back("mismatch: " + kv.first +
+                " live=[" + live_str.substr(0, 50) +
+                "] file=[" + kv.second.substr(0, 50) + "]");
+    }
+
+    char serial_live[256]{}, serial_boot[256]{};
     if (__system_property_get("ro.serialno", serial_live) > 0 &&
         __system_property_get("ro.boot.serialno", serial_boot) > 0 &&
-        strcmp(serial_live, serial_boot) != 0) {
-        mismatches.push_back(std::string("serial mismatch: ro.serialno=['") + serial_live + "'] ro.boot.serialno=['" + serial_boot + "']");
+        strcmp(serial_live, serial_boot) != 0)
+        evidence.push_back(std::string("ro.serialno/ro.boot.serialno mismatch: [") +
+            serial_live + "] vs [" + serial_boot + "]");
+
+    const char* serial_props[] = {
+        "ro.build.fingerprint", "ro.build.tags", "ro.build.type",
+        "ro.boot.verifiedbootstate", "ro.boot.vbmeta.device_state",
+        "ro.boot.flash.locked", "ro.debuggable", "ro.secure",
+        "ro.product.name", "ro.product.model", "ro.product.brand",
+        "ro.build.version.security_patch",
+        nullptr
+    };
+    for (int i = 0; serial_props[i]; i++) {
+        const prop_info* pi = __system_property_find(serial_props[i]);
+        if (!pi) continue;
+        uint32_t serial = __system_property_serial(pi);
+        if (serial >= 2)
+            evidence.push_back(std::string("prop_serial: ") + serial_props[i] +
+                " serial=" + std::to_string(serial) + " (written after init)");
     }
-    if (!mismatches.empty()) {
-        std::string detail = "resetprop/property mismatches:";
-        for (size_t i = 0; i < mismatches.size() && i < 4; i++) detail += " [" + mismatches[i] + "]";
-        add("resetprop_mismatch", "Build Prop Mismatch (resetprop)", detail);
+
+    const char* spoof_configs[] = {
+        "/data/adb/modules/playintegrityfix/custom.pif.json",
+        "/data/adb/modules/playintegrityfix/pif.json",
+        "/data/adb/modules/playintegrityfix/migrate.pif.json",
+        "/data/adb/pif.json",
+        "/data/adb/tricky_store/keybox.xml",
+        "/data/adb/modules/tricky_store/keybox.xml",
+        "/data/adb/modules/TrickyStore/keybox.xml",
+        nullptr
+    };
+    for (int i = 0; spoof_configs[i]; i++) {
+        if (fexists(spoof_configs[i]))
+            evidence.push_back(std::string("spoof config: ") + spoof_configs[i]);
+    }
+
+    if (!evidence.empty()) {
+        std::string d = "resetprop indicators (" + std::to_string(evidence.size()) + "):";
+        for (size_t i = 0; i < evidence.size() && i < 8; i++)
+            d += " [" + evidence[i] + "]";
+        add("resetprop_mismatch", "Modified Property Detected (resetprop)", d);
     }
 }
 

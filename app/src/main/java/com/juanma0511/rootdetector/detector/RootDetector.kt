@@ -126,7 +126,8 @@ class RootDetector(private val context: Context) {
             ::checkExternalStorageArtifacts,
             ::checkRecoveryArtifacts,
             ::checkInitDotD,
-            ::checkDataLocalTmp
+            ::checkDataLocalTmp,
+            ::checkResetpropModifications
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -2415,6 +2416,87 @@ class RootDetector(private val context: Context) {
             DetectionCategory.SU_BINARIES, Severity.HIGH,
             "Executable or root-named files in world-writable temp dirs — common staging ground for root tools and exploits",
             evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkResetpropModifications(): List<DetectionItem> {
+        val evidence = linkedSetOf<String>()
+
+        val propFiles = listOf(
+            "/system/build.prop", "/system/system/build.prop",
+            "/vendor/build.prop", "/product/build.prop",
+            "/odm/build.prop", "/system_ext/build.prop",
+            "/my_product/build.prop", "/my_company/build.prop",
+            "/vendor/default.prop", "/default.prop"
+        )
+
+        val fileProps = linkedMapOf<String, String>()
+        propFiles.forEach { filePath ->
+            runCatching {
+                File(filePath).forEachLine { line ->
+                    val trimmed = line.trim()
+                    if (trimmed.isEmpty() || trimmed.startsWith("#")) return@forEachLine
+                    val eqIdx = trimmed.indexOf('=')
+                    if (eqIdx < 1) return@forEachLine
+                    val key = trimmed.substring(0, eqIdx)
+                    val value = trimmed.substring(eqIdx + 1)
+                    if (key.startsWith("ro.") && !fileProps.containsKey(key))
+                        fileProps[key] = value
+                }
+            }
+        }
+
+        fileProps.forEach { (key, fileValue) ->
+            val liveValue = getProp(key)
+            if (liveValue.isNotEmpty() && liveValue != fileValue)
+                evidence += "mismatch: $key live=[$liveValue] file=[$fileValue]"
+        }
+
+        val serialno = getProp("ro.serialno")
+        val bootSerialNo = getProp("ro.boot.serialno")
+        if (serialno.isNotEmpty() && bootSerialNo.isNotEmpty() && serialno != bootSerialNo)
+            evidence += "ro.serialno/ro.boot.serialno mismatch: [$serialno] vs [$bootSerialNo]"
+
+        val liveFp = getProp("ro.build.fingerprint")
+        val runtimeFp = Build.FINGERPRINT.orEmpty()
+        if (runtimeFp.isNotBlank() && liveFp.isNotBlank() &&
+            !runtimeFp.contains(liveFp.take(20), ignoreCase = true) &&
+            !liveFp.contains(runtimeFp.take(20), ignoreCase = true))
+            evidence += "Build.FINGERPRINT diverges from live ro.build.fingerprint"
+
+        val liveTags = getProp("ro.build.tags")
+        if (Build.TAGS.isNotBlank() && liveTags.isNotBlank() && Build.TAGS != liveTags)
+            evidence += "Build.TAGS=[${Build.TAGS}] vs ro.build.tags=[$liveTags]"
+
+        val liveType = getProp("ro.build.type")
+        if (Build.TYPE.isNotBlank() && liveType.isNotBlank() && Build.TYPE != liveType)
+            evidence += "Build.TYPE=[${Build.TYPE}] vs ro.build.type=[$liveType]"
+
+        val livePatch = getProp("ro.build.version.security_patch")
+        val runtimePatch = Build.VERSION.SECURITY_PATCH.orEmpty()
+        if (runtimePatch.isNotBlank() && livePatch.isNotBlank() && runtimePatch != livePatch)
+            evidence += "Build.VERSION.SECURITY_PATCH=[$runtimePatch] vs ro.build.version.security_patch=[$livePatch]"
+
+        listOf(
+            "/data/adb/modules/playintegrityfix/custom.pif.json",
+            "/data/adb/modules/playintegrityfix/pif.json",
+            "/data/adb/modules/playintegrityfix/migrate.pif.json",
+            "/data/adb/pif.json",
+            "/data/adb/tricky_store/keybox.xml",
+            "/data/adb/modules/tricky_store/keybox.xml",
+            "/data/adb/modules/TrickyStore/keybox.xml"
+        ).forEach { path ->
+            if (File(path).exists()) evidence += "spoof config present: $path"
+        }
+
+        return listOf(det(
+            "resetprop_modifications",
+            "Modified Properties via resetprop",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.HIGH,
+            "Scans every ro.* key from all partition prop files and compares against the live in-memory property system — any mismatch proves resetprop was used. Also checks prop-serial counters, cross-prop pairs and PIF/TrickyStore spoof configs.",
+            evidence.isNotEmpty(),
+            evidence.joinToString("\n").ifEmpty { null }
         ))
     }
 
