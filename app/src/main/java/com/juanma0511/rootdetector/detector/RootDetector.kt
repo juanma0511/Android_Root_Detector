@@ -733,9 +733,10 @@ class RootDetector(private val context: Context) {
             val cls = Class.forName("android.os.SELinux")
             val method = cls.getMethod("checkSELinuxAccess",
                 String::class.java, String::class.java, String::class.java, String::class.java)
-            { scon: String, tcon: String, tclass: String, perm: String ->
+            val fn: (String, String, String, String) -> Boolean? = { scon, tcon, tclass, perm ->
                 method.invoke(null, scon, tcon, tclass, perm) as? Boolean
             }
+            fn
         }.getOrNull()
 
         val hits = linkedSetOf<String>()
