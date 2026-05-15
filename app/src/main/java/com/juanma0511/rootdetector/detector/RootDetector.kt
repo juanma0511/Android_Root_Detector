@@ -127,7 +127,9 @@ class RootDetector(private val context: Context) {
             ::checkRecoveryArtifacts,
             ::checkInitDotD,
             ::checkDataLocalTmp,
-            ::checkResetpropModifications
+            ::checkResetpropModifications,
+            ::checkSelinuxAttrCurrentWrite,
+            ::checkSelinuxDirtyPolicy
         )
         val items = mutableListOf<DetectionItem>()
         val total = checks.size + 1 
@@ -684,6 +686,88 @@ class RootDetector(private val context: Context) {
             "selinux", "SELinux Permissive", DetectionCategory.SYSTEM_PROPS, Severity.HIGH,
             "Permissive SELinux is a strong indicator of tampering and often survives root hiding",
             evidence.isNotEmpty(), evidence.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSelinuxAttrCurrentWrite(): List<DetectionItem> {
+        val targets = listOf(
+            "KernelSU"      to "u:r:ksu:s0",
+            "KernelSU file" to "u:r:ksu_file:s0",
+            "Magisk"        to "u:r:magisk:s0",
+            "Magisk file"   to "u:r:magisk_file:s0",
+            "LSPosed file"  to "u:r:lsposed_file:s0",
+            "Xposed data"   to "u:r:xposed_data:s0",
+            "MSD app"       to "u:r:msd_app:s0",
+            "MSD daemon"    to "u:r:msd_daemon:s0"
+        )
+        val hits = linkedSetOf<String>()
+        for ((label, ctx) in targets) {
+            runCatching {
+                val payload = ctx.toByteArray(Charsets.UTF_8)
+                java.io.FileOutputStream("/proc/self/attr/current").use { out ->
+                    android.system.Os.write(out.fd, payload, 0, payload.size)
+                }
+                hits += "$label:SUCCESS"
+            }.onFailure { err ->
+                val msg = err.message.orEmpty().lowercase()
+                val isNormalEinval = msg.contains("invalid argument") ||
+                    (err is android.system.ErrnoException && err.errno == android.system.OsConstants.EINVAL) ||
+                    (err is java.io.IOException && msg.contains("invalid argument"))
+                if (!isNormalEinval)
+                    hits += "$label:${err::class.java.simpleName}"
+            }
+        }
+        return listOf(det(
+            "selinux_attr_write",
+            "SELinux Root Context Detected (attr/current)",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.HIGH,
+            "Writes root-specific SELinux context strings to /proc/self/attr/current. EINVAL means the context is not in the loaded policy (normal). Any other response proves the context type exists in the live policy — confirming Magisk, KernelSU, LSPosed or Xposed is loaded.",
+            hits.isNotEmpty(),
+            hits.joinToString("\n").ifEmpty { null }
+        ))
+    }
+
+    private fun checkSelinuxDirtyPolicy(): List<DetectionItem> {
+        val checkAccess: ((String, String, String, String) -> Boolean?)? = runCatching {
+            val cls = Class.forName("android.os.SELinux")
+            val method = cls.getMethod("checkSELinuxAccess",
+                String::class.java, String::class.java, String::class.java, String::class.java)
+            { scon: String, tcon: String, tclass: String, perm: String ->
+                method.invoke(null, scon, tcon, tclass, perm) as? Boolean
+            }
+        }.getOrNull()
+
+        val hits = linkedSetOf<String>()
+        if (checkAccess != null) {
+            val isUserBuild = getProp("ro.build.type") == "user"
+            data class Rule(val src: String, val tgt: String, val cls: String, val perm: String, val label: String, val userBuildOnly: Boolean = false)
+            val rules = listOf(
+                Rule("u:r:system_server:s0",  "u:r:system_server:s0",       "process", "execmem",   "system_server execmem"),
+                Rule("u:r:untrusted_app:s0",  "u:object_r:magisk_file:s0",  "file",    "read",      "untrusted_app -> magisk_file read"),
+                Rule("u:r:untrusted_app:s0",  "u:object_r:ksu_file:s0",     "file",    "read",      "untrusted_app -> ksu_file read"),
+                Rule("u:r:untrusted_app:s0",  "u:object_r:lsposed_file:s0", "file",    "read",      "untrusted_app -> lsposed_file read"),
+                Rule("u:r:untrusted_app:s0",  "u:object_r:xposed_data:s0",  "file",    "read",      "untrusted_app -> xposed_data read"),
+                Rule("u:r:adbd:s0",           "u:r:adbroot:s0",             "binder",  "call",      "adbd -> adbroot binder"),
+                Rule("u:r:zygote:s0",         "u:object_r:adb_data_file:s0","dir",     "search",    "zygote -> adb_data_file search"),
+                Rule("u:r:shell:s0",          "u:r:su:s0",                  "process", "transition","shell -> su transition", userBuildOnly = true)
+            )
+            for (rule in rules) {
+                if (rule.userBuildOnly && !isUserBuild) continue
+                runCatching {
+                    val allowed = checkAccess(rule.src, rule.tgt, rule.cls, rule.perm)
+                    if (allowed == true) hits += "${rule.label}=allowed"
+                }
+            }
+        }
+        return listOf(det(
+            "selinux_dirty_policy",
+            "DirtySepolicy Rule Detected",
+            DetectionCategory.SYSTEM_PROPS,
+            Severity.HIGH,
+            "Queries specific SELinux access pairs via android.os.SELinux.checkSELinuxAccess that should always be denied on stock Android policy. If any are allowed, the loaded SELinux policy has been modified by a root framework (DirtySepolicy, Magisk, KernelSU, LSPosed or APatch).",
+            hits.isNotEmpty(),
+            hits.joinToString("\n").ifEmpty { null }
         ))
     }
 

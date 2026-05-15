@@ -2481,6 +2481,82 @@ static void detectRiruNative() {
     }
 }
 
+static void detectSelinuxAttrCurrentWrite() {
+    struct { const char* label; const char* ctx; } targets[] = {
+        {"KernelSU",        "u:r:ksu:s0"},
+        {"KernelSU file",   "u:r:ksu_file:s0"},
+        {"Magisk",          "u:r:magisk:s0"},
+        {"Magisk file",     "u:r:magisk_file:s0"},
+        {"LSPosed file",    "u:r:lsposed_file:s0"},
+        {"Xposed data",     "u:r:xposed_data:s0"},
+        {"MSD app",         "u:r:msd_app:s0"},
+        {"MSD daemon",      "u:r:msd_daemon:s0"},
+        {nullptr, nullptr}
+    };
+    std::vector<std::string> hits;
+    for (int i = 0; targets[i].label; i++) {
+        int fd = open("/proc/self/attr/current", O_WRONLY | O_CLOEXEC);
+        if (fd < 0) break;
+        ssize_t written = write(fd, targets[i].ctx, strlen(targets[i].ctx) + 1);
+        int err = errno;
+        close(fd);
+        if (written >= 0) {
+            hits.push_back(std::string(targets[i].label) + ":SUCCESS");
+        } else if (err != EINVAL) {
+            hits.push_back(std::string(targets[i].label) + ":err=" + std::to_string(err));
+        }
+    }
+    if (!hits.empty()) {
+        std::string d = "root contexts in live SELinux policy:";
+        for (auto& h : hits) d += " [" + h + "]";
+        add("selinux_attr_write", "SELinux Root Context Detected (attr/current)", d);
+    }
+}
+
+static void detectSelinuxDirtyPolicy() {
+    typedef int (*check_access_fn)(const char*, const char*, const char*, const char*, void*);
+    check_access_fn check_access = (check_access_fn)dlsym(RTLD_DEFAULT, "selinux_check_access");
+    if (!check_access) {
+        void* h = dlopen("libselinux.so", RTLD_NOW | RTLD_NOLOAD);
+        if (!h) h = dlopen("libselinux.so", RTLD_NOW);
+        if (h) check_access = (check_access_fn)dlsym(h, "selinux_check_access");
+    }
+    if (!check_access) return;
+
+    struct Rule {
+        const char* src; const char* tgt;
+        const char* cls; const char* perm;
+        const char* label;
+    } rules[] = {
+        {"u:r:system_server:s0",   "u:r:system_server:s0",       "process",           "execmem",   "system_server execmem"},
+        {"u:r:untrusted_app:s0",   "u:object_r:magisk_file:s0",  "file",              "read",      "untrusted_app -> magisk_file read"},
+        {"u:r:untrusted_app:s0",   "u:object_r:ksu_file:s0",     "file",              "read",      "untrusted_app -> ksu_file read"},
+        {"u:r:untrusted_app:s0",   "u:object_r:lsposed_file:s0", "file",              "read",      "untrusted_app -> lsposed_file read"},
+        {"u:r:untrusted_app:s0",   "u:object_r:xposed_data:s0",  "file",              "read",      "untrusted_app -> xposed_data read"},
+        {"u:r:adbd:s0",            "u:r:adbroot:s0",             "binder",            "call",      "adbd -> adbroot binder"},
+        {"u:r:zygote:s0",          "u:object_r:adb_data_file:s0","dir",               "search",    "zygote -> adb_data_file search"},
+        {"u:r:shell:s0",           "u:r:su:s0",                  "process",           "transition","shell -> su transition"},
+        {nullptr, nullptr, nullptr, nullptr, nullptr}
+    };
+
+    char build_type[256]{};
+    bool is_user_build = (__system_property_get("ro.build.type", build_type) > 0 &&
+                          strcmp(build_type, "user") == 0);
+
+    std::vector<std::string> hits;
+    for (int i = 0; rules[i].src; i++) {
+        if (strcmp(rules[i].label, "shell -> su transition") == 0 && !is_user_build) continue;
+        int result = check_access(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm, nullptr);
+        if (result == 0)
+            hits.push_back(std::string(rules[i].label) + "=allowed");
+    }
+    if (!hits.empty()) {
+        std::string d = "dirty sepolicy rules:";
+        for (auto& h : hits) d += " [" + h + "]";
+        add("selinux_dirty_policy", "DirtySepolicy Rule Detected", d);
+    }
+}
+
 extern "C" JNIEXPORT jobjectArray JNICALL
 Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* env, jobject) {
     g_results.clear();
@@ -2555,6 +2631,8 @@ Java_com_juanma0511_rootdetector_detector_NativeChecks_runNativeChecks(JNIEnv* e
     detectXposedNative();
     detectMapsFiltering();
     detectRiruNative();
+    detectSelinuxAttrCurrentWrite();
+    detectSelinuxDirtyPolicy();
 
     jclass sc = env->FindClass("java/lang/String");
     jobjectArray r = env->NewObjectArray((jsize)g_results.size(), sc, nullptr);
