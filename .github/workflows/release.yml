@@ -30,17 +30,42 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+      - name: Setup keystore
+        env:
+          KEYSTORE_B64: ${{ secrets.KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "$KEYSTORE_B64" | base64 -d > keystore.jks
+            echo "STORE_PASSWORD=${{ secrets.STORE_PASSWORD }}" >> $GITHUB_ENV
+            echo "KEY_ALIAS=${{ secrets.KEY_ALIAS }}"           >> $GITHUB_ENV
+            echo "KEY_PASSWORD=${{ secrets.KEY_PASSWORD }}"     >> $GITHUB_ENV
+          else
+            keytool -genkey -noprompt -v \
+              -keystore keystore.jks \
+              -alias kknd \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=KkndDetector,O=KkndDetector,C=US" \
+              -storepass kknddetector \
+              -keypass kknddetector
+            echo "STORE_PASSWORD=kknddetector" >> $GITHUB_ENV
+            echo "KEY_ALIAS=kknd"              >> $GITHUB_ENV
+            echo "KEY_PASSWORD=kknddetector"   >> $GITHUB_ENV
+            base64 -w0 keystore.jks > keystore_generated_b64.txt
+            echo "::notice::No KEYSTORE_BASE64 secret found — a new keystore was auto-generated. Download the keystore_b64 artifact and save it as the KEYSTORE_BASE64 secret so future releases use the same key."
+          fi
+
+      - name: Upload generated keystore (if auto-created)
+        if: ${{ env.KEY_ALIAS == 'kknd' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: keystore_b64
+          path: keystore_generated_b64.txt
+          retention-days: 7
 
       - name: Make Gradle executable
         run: chmod +x gradlew
 
       - name: Build Release APKs
-        env:
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: ./gradlew assembleRelease
 
       - name: Create GitHub Release
