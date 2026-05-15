@@ -2,44 +2,43 @@
 
 ![Banner](art/banner.png)
 
-Kknd Root Detector is a lightweight Android application that checks
-whether a device may be rooted or running in a potentially insecure
-environment.
-
-The project demonstrates common techniques used by security‑sensitive
-Android apps to detect root access and system modifications.
-
-This project is intended mainly for:
-
-- Android security learning
-- Developers implementing root detection
-- Reverse engineering practice
-- Educational demonstrations
+Kknd Root Detector is an Android application that performs deep, multi-layer detection of root access, hook frameworks, SELinux policy tampering, and system integrity violations — using both Kotlin and native C++ checks.
 
 ---
 
-## Features
+## Features — v3.1
 
-The application performs several checks typically used in root detection systems:
+### Native (C++) — 71 checks
 
-- Detection of **`su` binary** in common system paths
-- Detection of **known root management apps**
-- Basic **system integrity checks**
-- Detection of **suspicious files and directories**
-- Native‑based detection methods inspired by security research
+| Category | Description |
+|---|---|
+| Binary scan | `su`, root manager packages, suspicious paths |
+| Mount namespace | Bind-mounts, overlayfs, namespace isolation |
+| Property tampering | Resetprop scan across all partition prop files; `__system_property_serial` drift; PIF/TrickyStore spoof configs |
+| SELinux | `attr/current` write probe (root contexts in policy); DirtySepolicy `selinux_check_access` rule checks |
+| Zygisk / LSPosed | Module presence, memory maps, JNI hook traces |
+| Hardware security | Keystore attestation, TEE status, boot state |
 
-These checks help determine whether the device environment might be
-compromised.
+### Kotlin — 68 checks
+
+Mirrors the native layer with JVM-level checks: package manager scans, reflection-based `SELinux.checkSELinuxAccess`, prop reads, Play Integrity API integration, and certificate chain validation.
 
 ---
 
 ## Installation
 
-You can download the latest APK from the **GitHub Releases page**:
+Download the latest signed APK from the **Releases page**:
 
 https://github.com/juanma0511/Kknd_Root_Detector/releases
 
-Or use lastest CI Build in **Actions**.
+Two APK variants are provided per release — pick the one matching your device:
+
+| File | ABI |
+|---|---|
+| `RootDetector-3.1-arm64-v8a-release.apk` | 64-bit (most modern devices) |
+| `RootDetector-3.1-armeabi-v7a-release.apk` | 32-bit |
+
+Or grab the latest CI artifact from **Actions**.
 
 ---
 
@@ -47,31 +46,55 @@ Or use lastest CI Build in **Actions**.
 
 ### Requirements
 
-- Android Studio
-- Android SDK
-- JDK 17 (recommended)
-- Gradle (included via wrapper)
+- Android Studio Hedgehog or later
+- Android SDK (API 36)
+- NDK 27
+- JDK 17
+- CMake 3.22.1
 
 ### Steps
-
-Clone the repository:
 
 ```bash
 git clone https://github.com/juanma0511/Kknd_Root_Detector.git
 cd Kknd_Root_Detector
-```
-
-Open the project with **Android Studio** and build it normally.
-
-Or build from the command line:
-
-```bash
 ./gradlew assembleDebug
 ```
 
-The generated APK will be located at:
+The debug APK will be at:
 
     app/build/outputs/apk/debug/*.apk
+
+For a signed release build see the **Release workflow** section below.
+
+---
+
+## Release Workflow
+
+Releases are built and signed automatically via GitHub Actions when a `v*` tag is pushed:
+
+```bash
+git tag v3.1
+git push origin v3.1
+```
+
+Or trigger manually from the **Actions** tab using the **Release Build** workflow.
+
+### Required GitHub Secrets
+
+| Secret | Value |
+|---|---|
+| `KEYSTORE_BASE64` | Base64-encoded `.jks` keystore file |
+| `STORE_PASSWORD` | Keystore password |
+| `KEY_ALIAS` | Key alias inside the keystore |
+| `KEY_PASSWORD` | Key password |
+
+Generate a keystore if you don't have one:
+
+```bash
+keytool -genkey -v -keystore keystore.jks -alias mykey \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 -w0 keystore.jks
+```
 
 ---
 
@@ -83,12 +106,10 @@ The generated APK will be located at:
 
 ## Use Cases
 
-This project can be useful for:
-
 - Testing rooted Android devices
-- Studying how apps detect root access
-- Learning Android security concepts
-- Developing root detection features in apps
+- Studying root and hook framework detection techniques
+- Learning Android native security (SELinux, properties, mount namespaces)
+- Developing root detection in production apps
 
 ---
 
@@ -96,24 +117,19 @@ This project can be useful for:
 
 Native detection ideas inspired by:
 
-https://github.com/reveny/Android-Native-Root-Detector
+- https://github.com/reveny/Android-Native-Root-Detector
+- Duck-Detector-Refactoring (SELinux detection approach)
 
 ---
 
 ## Reporting Issues
 
-If you find a bug:
-
-- Open an issue:\
-  https://github.com/juanma0511/Kknd_Root_Detector/issues
-
-- Or contact via Telegram:\
-  https://t.me/juanma0511
+- Open an issue: https://github.com/juanma0511/Kknd_Root_Detector/issues
+- Telegram: https://t.me/juanma0511
 
 ---
 
 ## Disclaimer
 
 This project is provided for **educational and research purposes only**.
-
 Do not use it to bypass security protections in applications without authorization.

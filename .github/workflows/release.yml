@@ -1,0 +1,64 @@
+name: Release Build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v3.1)'
+        required: true
+        default: 'v3.1'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Decode keystore
+        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > keystore.jks
+
+      - name: Make Gradle executable
+        run: chmod +x gradlew
+
+      - name: Build Release APKs
+        env:
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: ./gradlew assembleRelease
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name || inputs.tag }}
+          name: KKND Detector ${{ github.ref_name || inputs.tag }}
+          body: |
+            ## What's new in ${{ github.ref_name || inputs.tag }}
+
+            - 71 native detection functions across all root/hook vectors
+            - SELinux `attr/current` write probe — detects root contexts in policy
+            - DirtySepolicy access rule checks via `selinux_check_access`
+            - Resetprop modification detection across all partition prop files
+            - PIF / TrickyStore spoof config detection
+            - Floating MD3 pill navigation bar
+            - Split APKs: `arm64-v8a` and `armeabi-v7a`
+
+            Two APKs are attached — pick the one matching your device ABI.
+          files: app/build/outputs/apk/release/*.apk
+          fail_on_unmatched_files: true
