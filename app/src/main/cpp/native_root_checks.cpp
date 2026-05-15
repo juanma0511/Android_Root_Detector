@@ -923,13 +923,20 @@ static void detectResetprop() {
         "ro.build.version.security_patch",
         nullptr
     };
-    for (int i = 0; serial_props[i]; i++) {
-        const prop_info* pi = __system_property_find(serial_props[i]);
-        if (!pi) continue;
-        uint32_t serial = __system_property_serial(pi);
-        if (serial >= 2)
-            evidence.push_back(std::string("prop_serial: ") + serial_props[i] +
-                " serial=" + std::to_string(serial) + " (written after init)");
+    {
+        typedef uint32_t (*prop_serial_fn_t)(const prop_info*);
+        static prop_serial_fn_t prop_serial_fn =
+            (prop_serial_fn_t)dlsym(RTLD_DEFAULT, "__system_property_serial");
+        if (prop_serial_fn) {
+            for (int i = 0; serial_props[i]; i++) {
+                const prop_info* pi = __system_property_find(serial_props[i]);
+                if (!pi) continue;
+                uint32_t serial = prop_serial_fn(pi);
+                if (serial >= 2)
+                    evidence.push_back(std::string("prop_serial: ") + serial_props[i] +
+                        " serial=" + std::to_string(serial) + " (written after init)");
+            }
+        }
     }
 
     const char* spoof_configs[] = {
@@ -1838,7 +1845,7 @@ static void detectKernelsuStatusFields() {
     size_t pos = status.find("CapEff:");
     if (pos != std::string::npos) {
         std::string cap_str = status.substr(pos + 7);
-        while (!cap_str.empty() && (cap_str[0] == ' ' || cap_str[0] == '        '))
+        while (!cap_str.empty() && (cap_str[0] == ' ' || cap_str[0] == '\t'))
             cap_str = cap_str.substr(1);
         
         unsigned long long caps = 0;
