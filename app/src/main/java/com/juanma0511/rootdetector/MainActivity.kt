@@ -91,27 +91,16 @@ fun MainShell(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
-        },
-        bottomBar = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .navigationBarsPadding()
-                    .padding(horizontal = 24.dp, vertical = 12.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                PillNavigationBar(
-                    selectedTab    = selectedTab,
-                    onTabSelected  = { selectedTab = it }
-                )
-            }
         }
     ) { padding ->
         Box(modifier = Modifier
-            .padding(padding)
+            .padding(top = padding.calculateTopPadding())
             .fillMaxSize()) {
             AnimatedContent(
                 targetState = selectedTab,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(bottom = 88.dp),
                 transitionSpec = {
                     if (targetState > initialState) {
                         slideInHorizontally { it } + fadeIn() togetherWith
@@ -131,6 +120,20 @@ fun MainShell(
                                 onThemeChange = onThemeChange
                             )
                 }
+            }
+
+            Box(
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .padding(horizontal = 24.dp, vertical = 12.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                PillNavigationBar(
+                    selectedTab   = selectedTab,
+                    onTabSelected = { selectedTab = it }
+                )
             }
         }
     }
