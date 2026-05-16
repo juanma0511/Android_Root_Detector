@@ -645,9 +645,6 @@ class RootDetector(private val context: Context) {
             if (file.exists()) {
                 found += file.absolutePath
             }
-            if (dir.contains("/su") || dir.contains("/data/adb") || dir.contains("/data/local")) {
-                found += "PATH:$dir"
-            }
         }
         val (regularFound, _) = splitOplusMatches(found)
         return listOf(det(
@@ -659,23 +656,11 @@ class RootDetector(private val context: Context) {
 
     private fun checkSELinux(): List<DetectionItem> {
         val evidence = linkedSetOf<String>()
-        val permissive = try {
-            val process = Runtime.getRuntime().exec("getenforce")
-            val result = process.inputStream.bufferedReader().readText().trim()
-            process.waitFor()
-            result.equals("Permissive", ignoreCase = true)
-        } catch (_: Exception) {
-            false
-        }
-        if (permissive) {
-            evidence += "getenforce=Permissive"
-        }
-        val enforceFile = try {
-            File("/sys/fs/selinux/enforce").readText().trim() == "0"
-        } catch (_: Exception) {
-            false
-        }
-        if (enforceFile) {
+        val sysfsValue = runCatching {
+            File("/sys/fs/selinux/enforce").readText().trim()
+        }.getOrNull()
+        val sysfsPermissive = sysfsValue == "0"
+        if (sysfsPermissive) {
             evidence += "/sys/fs/selinux/enforce=0"
         }
         val bootSelinux = getProp("ro.boot.selinux")
@@ -2379,18 +2364,12 @@ class RootDetector(private val context: Context) {
         val suDirs = listOf(
             "/su", "/su/bin", "/su/lib", "/su/xbin", "/su/etc",
             "/su/etc/init.d", "/su/su.d", "/su/0", "/su/1000",
-            "/system/su.d", "/system/etc/init.d", "/data/adb/su"
+            "/system/su.d", "/data/adb/su"
         )
         suDirs.forEach { path ->
             val f = File(path)
             if (f.exists() && f.isDirectory) {
                 evidence += "dir: $path"
-            } else {
-                try {
-                    f.listFiles()
-                } catch (_: SecurityException) {
-                    evidence += "dir: $path (access denied — exists)"
-                }
             }
         }
         listOf(
@@ -2538,36 +2517,24 @@ class RootDetector(private val context: Context) {
             }
         }
 
+        val securityPropChecks = listOf(
+            Triple("ro.debuggable", "0", "1"),
+            Triple("ro.secure", "1", "0"),
+            Triple("ro.build.type", "user", null)
+        )
         fileProps.forEach { (key, fileValue) ->
+            if (securityPropChecks.none { it.first == key }) return@forEach
             val liveValue = getProp(key)
-            if (liveValue.isNotEmpty() && liveValue != fileValue)
-                evidence += "mismatch: $key live=[$liveValue] file=[$fileValue]"
+            if (liveValue.isEmpty() || liveValue == fileValue) return@forEach
+            val suspicious = when (key) {
+                "ro.debuggable" -> fileValue == "0" && liveValue == "1"
+                "ro.secure"     -> fileValue == "1" && liveValue == "0"
+                "ro.build.type" -> fileValue == "user" && liveValue != "user"
+                else -> false
+            }
+            if (suspicious)
+                evidence += "security prop tampered: $key live=[$liveValue] file=[$fileValue]"
         }
-
-        val serialno = getProp("ro.serialno")
-        val bootSerialNo = getProp("ro.boot.serialno")
-        if (serialno.isNotEmpty() && bootSerialNo.isNotEmpty() && serialno != bootSerialNo)
-            evidence += "ro.serialno/ro.boot.serialno mismatch: [$serialno] vs [$bootSerialNo]"
-
-        val liveFp = getProp("ro.build.fingerprint")
-        val runtimeFp = Build.FINGERPRINT.orEmpty()
-        if (runtimeFp.isNotBlank() && liveFp.isNotBlank() &&
-            !runtimeFp.contains(liveFp.take(20), ignoreCase = true) &&
-            !liveFp.contains(runtimeFp.take(20), ignoreCase = true))
-            evidence += "Build.FINGERPRINT diverges from live ro.build.fingerprint"
-
-        val liveTags = getProp("ro.build.tags")
-        if (Build.TAGS.isNotBlank() && liveTags.isNotBlank() && Build.TAGS != liveTags)
-            evidence += "Build.TAGS=[${Build.TAGS}] vs ro.build.tags=[$liveTags]"
-
-        val liveType = getProp("ro.build.type")
-        if (Build.TYPE.isNotBlank() && liveType.isNotBlank() && Build.TYPE != liveType)
-            evidence += "Build.TYPE=[${Build.TYPE}] vs ro.build.type=[$liveType]"
-
-        val livePatch = getProp("ro.build.version.security_patch")
-        val runtimePatch = Build.VERSION.SECURITY_PATCH.orEmpty()
-        if (runtimePatch.isNotBlank() && livePatch.isNotBlank() && runtimePatch != livePatch)
-            evidence += "Build.VERSION.SECURITY_PATCH=[$runtimePatch] vs ro.build.version.security_patch=[$livePatch]"
 
         listOf(
             "/data/adb/modules/playintegrityfix/custom.pif.json",

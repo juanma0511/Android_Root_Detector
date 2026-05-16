@@ -263,7 +263,7 @@ static void detectPtrace() {
 static void detectSuBinary() {
     const char* bins[] = {
         "su", "su.bak", ".su", "su0", "daemonsu", "sush",
-        "busybox", "magisk", "ksud", "resetprop", "apd", "supersu",
+        "magisk", "ksud", "apd", "supersu",
         nullptr
     };
     const char* dirs[] = {
@@ -286,8 +286,6 @@ static void detectSuBinary() {
                 found.push_back(p);
                 if (st.st_mode & S_ISUID)
                     setuid_found.push_back(p);
-            } else if (errno == EACCES) {
-                found.push_back(std::string(p) + "(noperm)");
             }
         }
     }
@@ -307,7 +305,7 @@ static void detectSuDirectory() {
     const char* su_dirs[] = {
         "/su", "/su/bin", "/su/lib", "/su/xbin", "/su/etc",
         "/su/etc/init.d", "/su/su.d", "/su/0", "/su/1000",
-        "/system/su.d", "/system/etc/init.d",
+        "/system/su.d",
         "/data/adb/su",
         nullptr
     };
@@ -316,8 +314,6 @@ static void detectSuDirectory() {
         struct stat st{};
         if (stat(su_dirs[i], &st) == 0 && S_ISDIR(st.st_mode))
             found.push_back(su_dirs[i]);
-        else if (errno == EACCES)
-            found.push_back(std::string(su_dirs[i]) + "(noperm)");
     }
     char val[92]{};
     const char* su_props[] = {
@@ -881,7 +877,10 @@ static void detectResetprop() {
         nullptr
     };
 
-    std::map<std::string, std::string> file_props;
+    const char* security_props[] = {
+        "ro.debuggable", "ro.secure", "ro.build.type",
+        nullptr
+    };
     for (int fi = 0; prop_files[fi]; fi++) {
         std::ifstream f(prop_files[fi]);
         if (!f) continue;
@@ -891,51 +890,24 @@ static void detectResetprop() {
             size_t eq = line.find('=');
             if (eq == std::string::npos || eq == 0) continue;
             std::string key = line.substr(0, eq);
-            std::string val = line.substr(eq + 1);
-            if (!val.empty() && val.back() == '\r') val.pop_back();
-            if (key.compare(0, 3, "ro.") == 0 && file_props.find(key) == file_props.end())
-                file_props[key] = val;
-        }
-    }
-
-    for (auto& kv : file_props) {
-        char live[256]{};
-        if (__system_property_get(kv.first.c_str(), live) <= 0) continue;
-        std::string live_str = live;
-        if (live_str != kv.second)
-            evidence.push_back("mismatch: " + kv.first +
-                " live=[" + live_str.substr(0, 50) +
-                "] file=[" + kv.second.substr(0, 50) + "]");
-    }
-
-    char serial_live[256]{}, serial_boot[256]{};
-    if (__system_property_get("ro.serialno", serial_live) > 0 &&
-        __system_property_get("ro.boot.serialno", serial_boot) > 0 &&
-        strcmp(serial_live, serial_boot) != 0)
-        evidence.push_back(std::string("ro.serialno/ro.boot.serialno mismatch: [") +
-            serial_live + "] vs [" + serial_boot + "]");
-
-    const char* serial_props[] = {
-        "ro.build.fingerprint", "ro.build.tags", "ro.build.type",
-        "ro.boot.verifiedbootstate", "ro.boot.vbmeta.device_state",
-        "ro.boot.flash.locked", "ro.debuggable", "ro.secure",
-        "ro.product.name", "ro.product.model", "ro.product.brand",
-        "ro.build.version.security_patch",
-        nullptr
-    };
-    {
-        typedef uint32_t (*prop_serial_fn_t)(const prop_info*);
-        static prop_serial_fn_t prop_serial_fn =
-            (prop_serial_fn_t)dlsym(RTLD_DEFAULT, "__system_property_serial");
-        if (prop_serial_fn) {
-            for (int i = 0; serial_props[i]; i++) {
-                const prop_info* pi = __system_property_find(serial_props[i]);
-                if (!pi) continue;
-                uint32_t serial = prop_serial_fn(pi);
-                if (serial >= 2)
-                    evidence.push_back(std::string("prop_serial: ") + serial_props[i] +
-                        " serial=" + std::to_string(serial) + " (written after init)");
+            std::string file_val = line.substr(eq + 1);
+            if (!file_val.empty() && file_val.back() == '\r') file_val.pop_back();
+            bool is_security = false;
+            for (int si = 0; security_props[si]; si++) {
+                if (key == security_props[si]) { is_security = true; break; }
             }
+            if (!is_security) continue;
+            char live[256]{};
+            if (__system_property_get(key.c_str(), live) <= 0) continue;
+            std::string live_str = live;
+            if (live_str == file_val) continue;
+            bool suspicious = false;
+            if (key == "ro.debuggable" && live_str == "1" && file_val == "0") suspicious = true;
+            if (key == "ro.secure"     && live_str == "0" && file_val == "1") suspicious = true;
+            if (key == "ro.build.type" && live_str != "user" && file_val == "user") suspicious = true;
+            if (suspicious)
+                evidence.push_back("security prop tampered: " + key +
+                    " live=[" + live_str + "] file=[" + file_val + "]");
         }
     }
 
