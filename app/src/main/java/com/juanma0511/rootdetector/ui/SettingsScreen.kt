@@ -20,7 +20,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -29,6 +28,60 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import android.os.Build
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+
+data class Contributor(
+    val login: String,
+    val displayName: String,
+    val role: String,
+    val bio: String,
+    val avatarUrl: String,
+    val profileUrl: String
+)
+
+private val CONTRIBUTORS = listOf(
+    Contributor(
+        login = "juanma0511",
+        displayName = "Juan Ma",
+        role = "Developer",
+        bio = "",
+        avatarUrl = "https://avatars.githubusercontent.com/u/121111348?v=4",
+        profileUrl = "https://github.com/juanma0511"
+    ),
+    Contributor(
+        login = "OukaroMF",
+        displayName = "OukaroMF",
+        role = "Artist",
+        bio = "Created the app's artwork and visual assets",
+        avatarUrl = "https://avatars.githubusercontent.com/u/107784230?v=4",
+        profileUrl = "https://github.com/OukaroMF"
+    ),
+    Contributor(
+        login = "salihefee",
+        displayName = "salihefee",
+        role = "Contributor",
+        bio = "Cleaned up duplicate detection descriptions",
+        avatarUrl = "https://avatars.githubusercontent.com/u/61908056?v=4",
+        profileUrl = "https://github.com/salihefee"
+    ),
+    Contributor(
+        login = "WaggBR",
+        displayName = "WaggBR",
+        role = "Translator",
+        bio = "Added Portuguese (BR) translations",
+        avatarUrl = "https://avatars.githubusercontent.com/u/57603689?v=4",
+        profileUrl = "https://github.com/WaggBR"
+    ),
+    Contributor(
+        login = "originalFactor",
+        displayName = "originalFactor",
+        role = "Contributor",
+        bio = "Fixed artwork assets for platform compatibility",
+        avatarUrl = "https://avatars.githubusercontent.com/u/72148355?v=4",
+        profileUrl = "https://github.com/originalFactor"
+    )
+)
 
 @Composable
 fun SettingsScreen(
@@ -51,12 +104,8 @@ fun SettingsScreen(
 
         SettingsSection(title = stringResource(R.string.about)) {
             CreditsCard(
-                onGithubClick = {
-                    openExternalUrl(context, "https://github.com/juanma0511")
-                },
-                onOukaroGithubClick = {
-                    openExternalUrl(context, "https://github.com/OukaroMF")
-                }
+                contributors = CONTRIBUTORS,
+                onProfileClick = { url -> openExternalUrl(context, url) }
             )
         }
 
@@ -203,118 +252,102 @@ fun ThemeChip(
 }
 
 @Composable
-fun CreditsCard(
-    onGithubClick: () -> Unit,
-    onOukaroGithubClick: () -> Unit
+fun ContributorRow(
+    contributor: Contributor,
+    onProfileClick: (String) -> Unit,
+    showDivider: Boolean
 ) {
-    Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-
+    val context = LocalContext.current
+    Column {
         Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                modifier = Modifier.size(52.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Text("JM", style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
-                }
-            }
+            AsyncImage(
+                model = ImageRequest.Builder(context)
+                    .data(contributor.avatarUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = contributor.displayName,
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+            )
 
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    stringResource(R.string.developer_name),
+                    contributor.displayName,
                     style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    stringResource(R.string.developer_role),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    contributor.role,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.Medium
                 )
-            }
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-        OutlinedButton(
-            onClick = onGithubClick,
-            modifier = Modifier.fillMaxWidth().height(44.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(
-                Icons.Outlined.Code,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-               stringResource(R.string.github_juan),
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp
-            )
-        }
-
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
-                modifier = Modifier.size(52.dp)
-            ) {
-                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                    Text("OMF", style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
+                if (contributor.bio.isNotEmpty()) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        contributor.bio,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
-            Column {
-                Text(
-                    stringResource(R.string.designer_name),
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Text(
-                    stringResource(R.string.designer_role),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+            IconButton(
+                onClick = { onProfileClick(contributor.profileUrl) },
+                modifier = Modifier.size(36.dp)
+            ) {
+                Icon(
+                    Icons.Outlined.Code,
+                    contentDescription = "GitHub",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }
 
-        OutlinedButton(
-            onClick = onOukaroGithubClick,
-            modifier = Modifier.fillMaxWidth().height(44.dp),
-            shape = RoundedCornerShape(12.dp)
-        ) {
-            Icon(
-                Icons.Outlined.Code,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp)
-            )
-            Spacer(Modifier.width(8.dp))
-            Text(
-                stringResource(R.string.github_oukaro),
-                fontWeight = FontWeight.Medium,
-                fontSize = 14.sp
+        if (showDivider) {
+            HorizontalDivider(
+                modifier = Modifier.padding(horizontal = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
             )
         }
+    }
+}
+
+@Composable
+fun CreditsCard(
+    contributors: List<Contributor>,
+    onProfileClick: (String) -> Unit
+) {
+    Column(modifier = Modifier.padding(vertical = 4.dp)) {
+        contributors.forEachIndexed { index, contributor ->
+            ContributorRow(
+                contributor = contributor,
+                onProfileClick = onProfileClick,
+                showDivider = index < contributors.lastIndex
+            )
+        }
+
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        )
 
         Text(
             stringResource(R.string.built_with),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
             textAlign = TextAlign.Center,
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         )
     }
 }
