@@ -117,8 +117,8 @@ base64 -w0 keystore.jks
 
 Native detection ideas inspired by:
 
-- https://github.com/reveny/Android-Native-Root-Detector
-- Duck-Detector-Refactoring (SELinux detection approach)
+- [Native Detector](https://github.com/reveny/Android-Native-Root-Detector)
+- [Duck Detector](https://github.com/eltavine/Duck-Detector-Refactoring)
 
 ---
 
