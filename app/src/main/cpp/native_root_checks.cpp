@@ -2502,8 +2502,8 @@ static void detectSelinuxAttrCurrentWrite() {
         close(fd);
         if (written >= 0) {
             hits.push_back(std::string(targets[i].label) + ":SUCCESS");
-        } else if (err != EINVAL) {
-            hits.push_back(std::string(targets[i].label) + ":err=" + std::to_string(err));
+        } else if (err == EACCES) {
+            hits.push_back(std::string(targets[i].label) + ":EACCES");
         }
     }
     if (!hits.empty()) {
@@ -2539,6 +2539,15 @@ static void detectSelinuxDirtyPolicy() {
         {nullptr, nullptr, nullptr, nullptr, nullptr}
     };
 
+    auto query = [&](const char* src, const char* tgt, const char* cls, const char* perm) -> int {
+        errno = 0;
+        return check_access(src, tgt, cls, perm, nullptr);
+    };
+
+    int neg1 = query("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call");
+    int neg2 = query("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call");
+    if (neg1 == 0 || neg2 == 0) return;
+
     char build_type[256]{};
     bool is_user_build = (__system_property_get("ro.build.type", build_type) > 0 &&
                           strcmp(build_type, "user") == 0);
@@ -2546,8 +2555,9 @@ static void detectSelinuxDirtyPolicy() {
     std::vector<std::string> hits;
     for (int i = 0; rules[i].src; i++) {
         if (strcmp(rules[i].label, "shell -> su transition") == 0 && !is_user_build) continue;
-        int result = check_access(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm, nullptr);
-        if (result == 0)
+        int r1 = query(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm);
+        int r2 = query(rules[i].src, rules[i].tgt, rules[i].cls, rules[i].perm);
+        if (r1 == 0 && r2 == 0)
             hits.push_back(std::string(rules[i].label) + "=allowed");
     }
     if (!hits.empty()) {

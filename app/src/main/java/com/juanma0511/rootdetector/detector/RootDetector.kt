@@ -709,12 +709,15 @@ class RootDetector(private val context: Context) {
                 }
                 hits += "$label:SUCCESS"
             }.onFailure { err ->
-                val msg = err.message.orEmpty().lowercase()
-                val isNormalEinval = msg.contains("invalid argument") ||
-                    (err is android.system.ErrnoException && err.errno == android.system.OsConstants.EINVAL) ||
-                    (err is java.io.IOException && msg.contains("invalid argument"))
-                if (!isNormalEinval)
-                    hits += "$label:${err::class.java.simpleName}"
+                when {
+                    err is android.system.ErrnoException &&
+                        err.errno == android.system.OsConstants.EACCES ->
+                        hits += "$label:EACCES"
+                    err is java.io.IOException &&
+                        err.message?.lowercase()?.contains("permission denied") == true &&
+                        err.message?.lowercase()?.contains("invalid argument") == false ->
+                        hits += "$label:PermissionDenied"
+                }
             }
         }
         return listOf(det(
@@ -741,23 +744,27 @@ class RootDetector(private val context: Context) {
 
         val hits = linkedSetOf<String>()
         if (checkAccess != null) {
-            val isUserBuild = getProp("ro.build.type") == "user"
-            data class Rule(val src: String, val tgt: String, val cls: String, val perm: String, val label: String, val userBuildOnly: Boolean = false)
-            val rules = listOf(
-                Rule("u:r:system_server:s0",  "u:r:system_server:s0",       "process", "execmem",   "system_server execmem"),
-                Rule("u:r:untrusted_app:s0",  "u:object_r:magisk_file:s0",  "file",    "read",      "untrusted_app -> magisk_file read"),
-                Rule("u:r:untrusted_app:s0",  "u:object_r:ksu_file:s0",     "file",    "read",      "untrusted_app -> ksu_file read"),
-                Rule("u:r:untrusted_app:s0",  "u:object_r:lsposed_file:s0", "file",    "read",      "untrusted_app -> lsposed_file read"),
-                Rule("u:r:untrusted_app:s0",  "u:object_r:xposed_data:s0",  "file",    "read",      "untrusted_app -> xposed_data read"),
-                Rule("u:r:adbd:s0",           "u:r:adbroot:s0",             "binder",  "call",      "adbd -> adbroot binder"),
-                Rule("u:r:zygote:s0",         "u:object_r:adb_data_file:s0","dir",     "search",    "zygote -> adb_data_file search"),
-                Rule("u:r:shell:s0",          "u:r:su:s0",                  "process", "transition","shell -> su transition", userBuildOnly = true)
-            )
-            for (rule in rules) {
-                if (rule.userBuildOnly && !isUserBuild) continue
-                runCatching {
-                    val allowed = checkAccess(rule.src, rule.tgt, rule.cls, rule.perm)
-                    if (allowed == true) hits += "${rule.label}=allowed"
+            val neg1 = runCatching { checkAccess("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call") }.getOrNull()
+            val neg2 = runCatching { checkAccess("u:r:untrusted_app:s0", "u:r:init:s0", "binder", "call") }.getOrNull()
+            val oracleReliable = neg1 != true && neg2 != true
+            if (oracleReliable) {
+                val isUserBuild = getProp("ro.build.type") == "user"
+                data class Rule(val src: String, val tgt: String, val cls: String, val perm: String, val label: String, val userBuildOnly: Boolean = false)
+                val rules = listOf(
+                    Rule("u:r:system_server:s0",  "u:r:system_server:s0",       "process", "execmem",   "system_server execmem"),
+                    Rule("u:r:untrusted_app:s0",  "u:object_r:magisk_file:s0",  "file",    "read",      "untrusted_app -> magisk_file read"),
+                    Rule("u:r:untrusted_app:s0",  "u:object_r:ksu_file:s0",     "file",    "read",      "untrusted_app -> ksu_file read"),
+                    Rule("u:r:untrusted_app:s0",  "u:object_r:lsposed_file:s0", "file",    "read",      "untrusted_app -> lsposed_file read"),
+                    Rule("u:r:untrusted_app:s0",  "u:object_r:xposed_data:s0",  "file",    "read",      "untrusted_app -> xposed_data read"),
+                    Rule("u:r:adbd:s0",           "u:r:adbroot:s0",             "binder",  "call",      "adbd -> adbroot binder"),
+                    Rule("u:r:zygote:s0",         "u:object_r:adb_data_file:s0","dir",     "search",    "zygote -> adb_data_file search"),
+                    Rule("u:r:shell:s0",          "u:r:su:s0",                  "process", "transition","shell -> su transition", userBuildOnly = true)
+                )
+                for (rule in rules) {
+                    if (rule.userBuildOnly && !isUserBuild) continue
+                    val r1 = runCatching { checkAccess(rule.src, rule.tgt, rule.cls, rule.perm) }.getOrNull()
+                    val r2 = runCatching { checkAccess(rule.src, rule.tgt, rule.cls, rule.perm) }.getOrNull()
+                    if (r1 == true && r2 == true) hits += "${rule.label}=allowed"
                 }
             }
         }
